@@ -5,11 +5,12 @@
 # Date: 25/01/2022
 
 # To-Do: 
-#   * Add [dir] argument
+#   * Add get_focus() function to obtain focus value from historical measurements.
 
 library(glue)
 
-if (libPath != "") {.libPaths(c(libPath,.libPaths()))}
+#.libPaths(c(libPath,.libPaths()))
+
 evalGlobal = TRUE
 Sys.setenv(TINYTIM='/Users/00092380/Documents/Software/tinytim') # Need to change for Pawsey machine.
 
@@ -50,38 +51,44 @@ TinyTimACSR = function(input_dir, name, chip, x, y, filter, spectrum=13, size=3.
 }
 
 ### Load in any command-line arguments ###
-# Rscript Generate_HST_PSFs.R [name] [chip] [x] [y] [focus=0.0] [size=10.0] [filter=F814W] [spectrum=13] 
-#args = commandArgs(trailingOnly = TRUE) # Parse arguments (if given)
-args = c('test1','2','1000','1000','NA','NA')
+# Rscript Generate_HST_PSFs.R [dir] [name] [chip] [x] [y] [focus=0.0] [size=10.0] [filter=F814W] [spectrum=13] 
+args = commandArgs(trailingOnly = TRUE) # Parse arguments (if given)
+#args = c('/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/PSFs','test1','2','1000','1000','NA','NA')
 
-if (length(args) < 4) { # get command line args
+if (length(args) < 5) { # get command line args
   stop(glue("Require, at least, the arguments: [name] [chip] [x] [y], but only {length(args)} were given."))
 } else {
-  name = args[1] # name of PSF outputs
   
-  chip = as.integer(args[2]) # CCD chip number
-  if (is.na(chip) | chip > 2 | chip < 1){ stop(glue("Chip must be able to be coerced into integer of 1 or 2, but instead received {args[2]}.")) }
-  
-  x = as.integer(args[3]) # x position
-  y = as.integer(args[4]) # y position
-  if (is.na(x) | is.na(y)){ stop(glue("x/y must be able to be coerced into integer, but instead received {args[3]}, {args[4]}.")) }
-  
-  if (is.na(args[5]) | args[5]=='NA') {  # focus
-    focus = 0.0
-  } else if (args[5] == 'auto'){
-    focus = get_focus()
-  } else {
-    focus = as.numeric(args[5])
-    if (is.na(focus)) {stop(glue("focus must either be 'auto' or able to be coerced into float, but instead received {args[5]}."))}
+  dir = args[1] # directory for PSFs
+  if (!file.exists(dir)){
+    dir.create(dir)
   }
   
-  size = ifelse(is.na(args[6]) | args[6]=='NA', 10, as.numeric(args[6])) # Output PSF size
-  if (is.na(size)) {stop(glue("size must be able to be coerced into float, but instead received {args[6]}."))}
+  name = args[2] # name of PSF outputs
   
-  filter = ifelse(is.na(args[7]) | args[7]=='NA', 'f814w', args[7]) # Filter
+  chip = as.integer(args[3]) # CCD chip number
+  if (is.na(chip) | chip > 2 | chip < 1){ stop(glue("Chip must be able to be coerced into integer of 1 or 2, but instead received {args[3]}.")) }
   
-  spectrum = ifelse(is.na(args[8]) | args[8]=='NA', 13, as.integer(args[8])) # Spectrum choice
-  if (is.na(spectrum) | spectrum > 20){ stop(glue("spectrum must be able to be coerced into integer, but instead received {args[8]}.")) }
+  x = as.integer(args[4]) # x position
+  y = as.integer(args[5]) # y position
+  if (is.na(x) | is.na(y)){ stop(glue("x/y must be able to be coerced into integer, but instead received {args[4]}, {args[5]}.")) }
+  
+  if (is.na(args[6]) | args[6]=='NA') {  # focus
+    focus = 0.0
+  } else if (args[6] == 'auto'){
+    focus = get_focus()
+  } else {
+    focus = as.numeric(args[6])
+    if (is.na(focus)) {stop(glue("focus must either be 'auto' or able to be coerced into float, but instead received {args[6]}."))}
+  }
+  
+  size = ifelse(is.na(args[7]) | args[7]=='NA', 10, as.numeric(args[7])) # Output PSF size
+  if (is.na(size)) {stop(glue("size must be able to be coerced into float, but instead received {args[7]}."))}
+  
+  filter = ifelse(is.na(args[8]) | args[8]=='NA', 'f814w', args[8]) # Filter
+  
+  spectrum = ifelse(is.na(args[9]) | args[9]=='NA', 13, as.integer(args[9])) # Spectrum choice
+  if (is.na(spectrum) | spectrum > 17){ stop(glue("spectrum must be able to be coerced into integer and not greater than 17, but instead received {args[9]}.")) }
   
 }
 

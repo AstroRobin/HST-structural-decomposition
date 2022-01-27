@@ -141,6 +141,7 @@ from_header = function(hdr, keys, to=as.numeric){
 workDir = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/DEVILS_Structural_Decomposition'
 framesDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/PID09822/Frames'
 psfsDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/PSFs'
+psfScriptPath = '~/Documents/GoogleDrive/PostDoc-UWA/Programs/HST-structural-decomposition/Generate_HST_PSFs.R' # If no PSF exists, make one using this script
 
 outDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/Fitting_Outputs'
 plotDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/Plots'
@@ -276,8 +277,12 @@ for (ii in seq(1,1)){ #nrow(obsetsDF)){
       imgCutList[[expName]] = magcutout(imgList[[expName]][[expChip]], loc=srcLoc, box=cutoutBox, plot=FALSE)$image
       dqCutList[[expName]] = magcutout(dqList[[expName]][[expChip]], loc=srcLoc, box=cutoutBox, plot=FALSE)$image
       maskList[[expName]] = apply(apply(dqCutList[[expName]], c(1,2), mask_pixel), c(1,2), as.numeric )
-      psfList[[expName]] = Rfits_read_image(glue('{psfsDir}/101506350912562912/101506350912562912_j8pu01w4q_psf.fits',ext=2))$imDat
-      #psfList[[expName]] = Rfits_read_image(glue('{psfsDir}/{sourceName}/{sourceName}_{dfDEVILS$exp_name_1[idx]}_psf.fits',ext=2))$imDat
+      
+      psfFilename = glue('{psfsDir}/{sourceName}_{dfDEVILS$exp_name_1[idx]}_psf.fits')
+      if (!file.exists(psfFilename)){
+        system(glue("Rscript {psfScriptPath} {psfsDir} {sourceName}_{dfDEVILS$exp_name_1[idx]} {dfDEVILS$exp_chip_1[idx]} {dfDEVILS$exp_x_1[idx]} {dfDEVILS$exp_y_1[idx]} 0.0 13.0"))
+      }
+      psfList[[expName]] = Rfits_read_image(psfFilename,ext=1)$imDat
       
     }
     
