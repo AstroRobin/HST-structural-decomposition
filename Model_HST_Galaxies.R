@@ -17,6 +17,9 @@
 # Author: R. H. W. Cook
 # Date: 12/01/2022
 
+# Usage:
+# >> Rscript Model_HST_Galaxies.R [computer]
+
 library(ProFound)
 library(ProFit)
 library(ProFuse)
@@ -27,10 +30,35 @@ library(magicaxis)
 library(Highlander)
 library(celestial)
 
+library(foreach) # Parallel evaluation of for loops
+library(doParallel) # Parallel backend for the foreach's %dopar% function 
+
 library(glue)
 library(assertthat)
 
 evalglobal = TRUE # Set global evaluate
+
+
+#######################################
+### Get arguments from command-line ###
+#######################################
+
+args = commandArgs(trailingOnly=TRUE)
+if (length(args) > 0){
+  computer = args[1]
+  if (computer == 'local'){
+    cat("INFO: Running on local machine.")
+  } else if (computer == 'magnus') {
+    cat("INFO: Running on magnus.")
+    .libPaths(c('/home/sbellstedt/R/x86_64-suse-linux-gnu-library/3.6',.libPaths()))
+    nCores = 24
+  } else {
+    stop(glue("ERROR: The computer '{computer}' is not recognised."))
+    nCores = strtoi(Sys.getenv('SLURM_CPUS_PER_TASK', unset=1))
+  }
+}
+
+registerDoParallel(cores=nCores)
 
 ###############################
 ### Define Useful Functions ###
@@ -298,6 +326,7 @@ for (ii in seq(1,1)){ #nrow(obsetsDF)){
     if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}_{modelName}_frame_cutouts.png"), width=720, height=720, pointsize=16)}
     if (toPlot|toSave){par(mfrow=c(2,2), mar = c(1,1,1,1))}
     found2Fits = list()
+    #foreach(ii=1:length(IDs$CATAID), .inorder=FALSE)%dopar%{ # .packages='packages needed for execution', .export/.noexport, .combine='c','+','*','rbind','cbind'
     for (jj in seq(1,dfDEVILS$found_exps[idx])){
       ### Read required info from header.
       magZP = 35.796 #from_header(hdrList[[jj]], 'PHOTZPT', to=as.numeric) 
