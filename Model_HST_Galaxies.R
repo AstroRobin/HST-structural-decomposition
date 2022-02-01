@@ -14,11 +14,11 @@
 #   - 'free-exp'
 #   - 'free-free'
 
-# Author: R. H. W. Cook
-# Date: 12/01/2022
+## Author: R. H. W. Cook
+## Date: 12/01/2022
 
-# Usage:
-# >> Rscript Model_HST_Galaxies.R [computer]
+## Usage:
+# >> Rscript Model_HST_Galaxies.R --obset=[ID] --inputcat=[PATH] --model=[MODEL] --computer=['local'|'magnus']
 
 library(ProFound)
 library(ProFit)
@@ -38,27 +38,6 @@ library(assertthat)
 
 evalglobal = TRUE # Set global evaluate
 
-
-#######################################
-### Get arguments from command-line ###
-#######################################
-
-args = commandArgs(trailingOnly=TRUE)
-if (length(args) > 0){
-  computer = args[1]
-  if (computer == 'local'){
-    cat("INFO: Running on local machine.")
-  } else if (computer == 'magnus') {
-    cat("INFO: Running on magnus.")
-    .libPaths(c('/home/sbellstedt/R/x86_64-suse-linux-gnu-library/3.6',.libPaths()))
-    nCores = 24
-  } else {
-    stop(glue("ERROR: The computer '{computer}' is not recognised."))
-    nCores = strtoi(Sys.getenv('SLURM_CPUS_PER_TASK', unset=1))
-  }
-}
-
-registerDoParallel(cores=nCores)
 
 ###############################
 ### Define Useful Functions ###
@@ -162,14 +141,58 @@ from_header = function(hdr, keys, to=as.numeric){
 }
 
 
+#######################################
+### Get arguments from command-line ###
+#######################################
+
+parser = ArgumentParser()
+parser$add_argument("-i","--inputcat",required=TRUE,
+                    action='store',dest='inputcat',type='character',default=NULL,
+                    help="The catalogue of galaxy sources over which to run the optimisation routine.",metavar="PATH")
+parser$add_argument("-o","--obset",
+                    action='store',dest='obset',type='character',default=NULL,
+                    help="The observation set ID in the format JXXXXX010",metavar="ID")
+parser$add_argument("-m","--model",
+                    action='store',dest='model',type='character',default=NULL,choices=c('single','psf-exp','deV-exp','psf-free','deV-free','free-exp','free-free'),
+                    help="The model type to be optimised.",metavar="ID")
+parser$add_argument("-c","--computer",
+                    action='store',dest='computer',type='character',default=NULL,choices=c('local','magnus'),
+                    help="The machine on which this code is running",metavar="computer")
+
+# Parse arguments and validate
+args = parser$parse_args()
+
+if (!is.null(args$obset)){
+  if (nchar(args$obset) != 9 | substr(args$obset,7,9) != '010'){
+    print(glue("ERROR: The observation set ID '{args$obset}' does not have the correct pattern (nine characters ending in '010')."))    
+  }
+}
+
+if (is.null(args$computer)){
+  nCores = strtoi(Sys.getenv('SLURM_CPUS_PER_TASK', unset=1))
+} else if (args$computer == 'local'){
+  cat("INFO: Running on local machine.")
+  nCores = strtoi(Sys.getenv('SLURM_CPUS_PER_TASK', unset=1))
+} else if (args$computer == 'magnus') {
+  cat("INFO: Running on magnus.")
+  .libPaths(c('/home/sbellstedt/R/x86_64-suse-linux-gnu-library/3.6',.libPaths()))
+  nCores = 24
+}
+  
+
+# Set up some parallel code
+registerDoParallel(cores=nCores)
+
+
 ##############################
 ### Define User parameters ###
 ##############################
 
-workDir = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/DEVILS_Structural_Decomposition'
-framesDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/PID09822/Frames'
+baseDir = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA'
+workDir = glue('{baseDir}/Tasks/DEVILS_Structural_Decomposition')
+framesDir = glue('{baseDir}/HST_COSMOS/PID09822/Frames')
+psfScriptPath = glue('{baseDir}/Programs/HST-structural-decomposition/Generate_HST_PSFs.R') # If no PSF exists, make one using this script
 psfsDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/PSFs'
-psfScriptPath = '~/Documents/GoogleDrive/PostDoc-UWA/Programs/HST-structural-decomposition/Generate_HST_PSFs.R' # If no PSF exists, make one using this script
 
 outDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/Fitting_Outputs'
 plotDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/Plots'
@@ -191,7 +214,7 @@ roughFit = FALSE
 ### Select Light Profile Model and Parameters ###
 #################################################
 
-modelName = 'single'#'single','psf-exp','deV-exp','psf-free','deV-free','free-exp','free-free'
+modelName = args$model #'single','psf-exp','deV-exp','psf-free','deV-free','free-exp','free-free'
 
 modelOpts = list(disk_nser = 1, # Disk Sersic indec always starts with exponential
                    bulge_nser = 4, # Bulge Sersic indec always starts with de Vaucouleurs
