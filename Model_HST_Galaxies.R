@@ -164,8 +164,10 @@ args = parser$parse_args()
 
 if (!is.null(args$obset)){
   if (nchar(args$obset) != 9 | substr(args$obset,7,9) != '010'){
-    print(glue("ERROR: The observation set ID '{args$obset}' does not have the correct pattern (nine characters ending in '010')."))    
+    stop(glue("ERROR: The observation set ID '{args$obset}' does not have the correct pattern (nine characters ending in '010')."))    
   }
+  
+  obset = c(args$obset)
 }
 
 if (is.null(args$computer)){
@@ -307,31 +309,31 @@ for (ii in seq(1,1)){ #nrow(obsetsDF)){
   #if (toPlot){par(mfrow=c(2,4))} # For plotting, set the shape of the subplots
   
   # Get all DEVILS sources that are present in this exposure
-  foundSources = which(toupper(substr(dfDEVILS$exp_name_1,1,6)) == substr(obsetsDF$dataset[ii],1,6))
+  foundSources = which(toupper(substr(dfDEVILS$name_exp1,1,6)) == substr(obsetsDF$dataset[ii],1,6))
   for (idx in foundSources[4:4]){
     cat(idx,'\n')
     sourceName = format(dfDEVILS$UID[idx],scientific=FALSE)
-    cat(glue("INFO: UID: {sourceName}\n  {dfDEVILS$found_exps[idx]} exposures found: \n\n"))
+    cat(glue("INFO: UID: {sourceName}\n  {dfDEVILS$num_exps[idx]} exposures found: \n\n"))
     
     imgCutList = list()
     dqCutList = list()
     maskList = list()
     psfList = list()
-    for (jj in seq(1,dfDEVILS$found_exps[idx])){
+    for (jj in seq(1,dfDEVILS$num_exps[idx])){
       
-      expName = dfDEVILS[[glue('exp_name_{jj}')]][idx]
-      expChip = dfDEVILS[[glue('exp_chip_{jj}')]][idx] - (-1)^dfDEVILS[[glue('exp_chip_{jj}')]][idx]
-      srcLoc = c(dfDEVILS[[glue('exp_x_{jj}')]][idx],dfDEVILS[[glue('exp_y_{jj}')]][idx])
+      expName = dfDEVILS[[glue('name_exp{jj}')]][idx]
+      expExt = dfDEVILS[[glue('chip_exp{jj}')]][idx] - (-1)^dfDEVILS[[glue('chip_exp{jj}')]][idx]
+      srcLoc = c(dfDEVILS[[glue('x_exp{jj}')]][idx], dfDEVILS[[glue('y_exp{jj}')]][idx])
         
-      cat('    > ',jj,': ',expName,' [',expChip,']\n', sep='')
+      cat('    > ',jj,': ',expName,' [',expExt,']\n', sep='')
       
-      imgCutList[[expName]] = magcutout(imgList[[expName]][[expChip]], loc=srcLoc, box=cutoutBox, plot=FALSE)$image
-      dqCutList[[expName]] = magcutout(dqList[[expName]][[expChip]], loc=srcLoc, box=cutoutBox, plot=FALSE)$image
+      imgCutList[[expName]] = magcutout(imgList[[expName]][[expExt]], loc=srcLoc, box=cutoutBox, plot=FALSE)$image
+      dqCutList[[expName]] = magcutout(dqList[[expName]][[expExt]], loc=srcLoc, box=cutoutBox, plot=FALSE)$image
       maskList[[expName]] = apply(apply(dqCutList[[expName]], c(1,2), mask_pixel), c(1,2), as.numeric )
       
-      psfFilename = glue('{psfsDir}/{sourceName}_{dfDEVILS$exp_name_1[idx]}_psf.fits')
+      psfFilename = glue('{psfsDir}/{sourceName}_{dfDEVILS$name_exp1[idx]}_psf.fits')
       if (!file.exists(psfFilename)){
-        system(glue("Rscript {psfScriptPath} {psfsDir} {sourceName}_{dfDEVILS$exp_name_1[idx]} {dfDEVILS$exp_chip_1[idx]} {dfDEVILS$exp_x_1[idx]} {dfDEVILS$exp_y_1[idx]} 0.0 13.0"))
+        system(glue("Rscript {psfScriptPath} {psfsDir} {sourceName}_{dfDEVILS$name_exp1[idx]} {dfDEVILS$chip_exp1[idx]} {dfDEVILS$x_exp1[idx]} {dfDEVILS$y_exp1[idx]} 0.0 13.0"))
       }
       psfList[[expName]] = Rfits_read_image(psfFilename,ext=1)$imDat
       
@@ -350,7 +352,7 @@ for (ii in seq(1,1)){ #nrow(obsetsDF)){
     if (toPlot|toSave){par(mfrow=c(2,2), mar = c(1,1,1,1))}
     found2Fits = list()
     #foreach(ii=1:length(IDs$CATAID), .inorder=FALSE)%dopar%{ # .packages='packages needed for execution', .export/.noexport, .combine='c','+','*','rbind','cbind'
-    for (jj in seq(1,dfDEVILS$found_exps[idx])){
+    for (jj in seq(1,dfDEVILS$num_exps[idx])){
       ### Read required info from header.
       magZP = 35.796 #from_header(hdrList[[jj]], 'PHOTZPT', to=as.numeric) 
       ccdGain = 1 #from_header(hdrList[[jj]], 'CCDGAIN', to=as.numeric) # This is in the previous HDU, but it's always 1 for HST ACS
@@ -372,12 +374,13 @@ for (ii in seq(1,1)){ #nrow(obsetsDF)){
       #                                    pos_delta = 10, # does this pos_delta value work for the biggest galaxies?
       #                                    tightcrop = FALSE, deblend_extra=FALSE, fit_extra=FALSE, rough=roughFit, plot=toPlot)
       
-      expChip = dfDEVILS[[glue('exp_chip_{jj}')]][idx] - (-1)^dfDEVILS[[glue('exp_chip_{jj}')]][idx]
-      srcLoc = c(dfDEVILS[[glue('exp_x_{jj}')]][idx],dfDEVILS[[glue('exp_y_{jj}')]][idx]) # need to move this out of the loop and just use the first exposure's position as the location.
+      expName = dfDEVILS[[glue('name_exp{jj}')]][idx]
+      expExt = dfDEVILS[[glue('chip_exp{jj}')]][idx] - (-1)^dfDEVILS[[glue('chip_exp{jj}')]][idx]
+      srcLoc = c(dfDEVILS[[glue('x_exp{jj}')]][idx],dfDEVILS[[glue('y_exp{jj}')]][idx]) # need to move this out of the loop and just use the first exposure's position as the location.
       
       
-      found2Fits[[jj]] = profuseFound2Fit_(imgList[[jj]][[expChip]], psf=psfList[[jj]], segim = seg$segim,
-                                          mask=maskList[[jj]],SBdilate=2.5,reltol=1.5,ext=5,
+      found2Fits[[jj]] = profuseFound2Fit_(imgList[[expName]][[expExt]], psf=psfList[[expName]], segim = seg$segim,
+                                          mask=maskList[[expName]],SBdilate=2.5,reltol=1.5,ext=5,
                                           loc=srcLoc, cutbox=cutoutBox, loc_use=FALSE, loc_fit=TRUE,
                                           magzero=magZP, gain = ccdGain, 
                                           Ncomp=modelOpts$n_comps,
@@ -391,8 +394,8 @@ for (ii in seq(1,1)){ #nrow(obsetsDF)){
       if (jj > 1){
         # Offsets calculated as the difference between the x/y values listed in the data frame.
         found2Fits[[jj]]$Data$offset = c(0,0)
-        #found2Fits[[jj]]$Data$offset = c(dfDEVILS[[glue('exp_x_{jj}')]][idx] - dfDEVILS[['exp_x_1']][idx],
-        #                                 dfDEVILS[[glue('exp_y_{jj}')]][idx] - dfDEVILS[['exp_y_1']][idx])
+        #found2Fits[[jj]]$Data$offset = c(dfDEVILS[[glue('x_exp{jj}')]][idx] - dfDEVILS[['x_exp1']][idx],
+        #                                 dfDEVILS[[glue('y_exp{jj}')]][idx] - dfDEVILS[['y_exp1']][idx])
         
       }
       
@@ -400,7 +403,7 @@ for (ii in seq(1,1)){ #nrow(obsetsDF)){
       found2Fits[[jj]]$Data$usecalcregion = FALSE
       
       if(toPlot|toSave){
-        text(0.1*cutoutBox[1],0.925*cutoutBox[2],as.character(dfDEVILS[[glue('exp_name_{jj}')]][idx]), adj=0, col='white', cex=1.75)
+        text(0.1*cutoutBox[1],0.925*cutoutBox[2],as.character(dfDEVILS[[glue('name_exp{jj}')]][idx]), adj=0, col='white', cex=1.75)
       }
       
     }
@@ -430,7 +433,7 @@ for (ii in seq(1,1)){ #nrow(obsetsDF)){
     }
     
     if (toPlot|toSave){
-      for (jj in seq(1,dfDEVILS$found_exps[idx])){
+      for (jj in seq(1,dfDEVILS$num_exps[idx])){
         if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-exp{jj}_{modelName}_model_residuals.png"), width=1000, height=650, pointsize=20)}
         profitLikeModel(highFit$parm, Data=dataList[[jj]], makeplots=TRUE, rough=FALSE, plotchisq=TRUE)
         if (toSave){dev.off()}
