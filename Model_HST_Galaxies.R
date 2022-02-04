@@ -166,7 +166,6 @@ if (!is.null(args$obset)){
   if (nchar(args$obset) != 9 | substr(args$obset,7,9) != '010'){
     stop(glue("ERROR: The observation set ID '{args$obset}' does not have the correct pattern (nine characters ending in '010')."))    
   }
-  
   obset = c(args$obset)
 }
 
@@ -276,210 +275,223 @@ optimOpts = list(Niters=c(500,1000),NfinalMCMC=2500,
 framePositionsFile = glue('{workDir}/Catalogues/DEVILS_D10_HST_ACS_Frame_Positions_PID09822.csv')
 dfDEVILS = read.csv(framePositionsFile)
 
+if (is.null(obset)){ # If no observation set ID given, pull this directly from the catalogue
+  obset = dfDEVILS$obset_id[1]
+}
+
+
+## ---------- Redundant ---------- ##
 ### Load Catalogue of Frames ### 
-obsetsFile = glue('{workDir}/Catalogues/Obset_Reference_Tables/HST-ACS_COSMOS_PID09822_obset_reference_table.csv')
-obsetsDF = read.csv(obsetsFile)
+#obsetsFile = glue('{workDir}/Catalogues/Obset_Reference_Tables/HST-ACS_COSMOS_PID09822_obset_reference_table.csv')
+#obsetsDF = read.csv(obsetsFile)
 #View(obsetsDF)
 
 
 ### Loop over all observation sets ###
-for (ii in seq(1,1)){ #nrow(obsetsDF)){
+#for (ii in nrow(obsetsDF)){
   
-  cat(glue("Obsevation Set ID: {obsetsDF$dataset[ii]}\n"))
+  #cat(glue("Obsevation Set ID: {obsetsDF$dataset[ii]}\n"))
   
   ### Load each exposure's image & DQ map from the observation set
-  obsetDir = glue('{framesDir}/{obsetsDF$dataset[ii]}')
-  expFiles = list.files(path=obsetDir)
+  #obsetDir = glue('{framesDir}/{obsetsDF$dataset[ii]}')
+  #expFiles = list.files(path=obsetDir)
+## ------------------------------- ##
   
-  imgList = list() # The science images
-  dqList = list() # The data quality maps
-  hdrList = list() # The headers for the fits files
-  for ( jj in seq_along(expFiles) ){
-    hdulist = Rfits_read_all(glue( "{obsetDir}/{expFiles[jj]}" ), pointer=FALSE, header=TRUE)
+
+cat(glue("Obsevation Set ID: {obset}\n"))
+
+### Load each exposure's image & DQ map from the observation set
+obsetDir = glue('{framesDir}/{obset}')
+expFiles = list.files(path=obsetDir)
+
+
+imgList = list() # The science images
+dqList = list() # The data quality maps
+hdrList = list() # The headers for the fits files
+for ( jj in seq_along(expFiles) ){
+  hdulist = Rfits_read_all(glue( "{obsetDir}/{expFiles[jj]}" ), pointer=FALSE, header=TRUE)
+  
+  expName = substr(expFiles[jj],1,9)
+  imgList[[expName]] = list(hdulist[[sciIndex]]$imDat, hdulist[[sciIndex+3]]$imDat)
+  dqList[[expName]] = list( profoundMakeSegimDilate(segim=hdulist[[dqIndex]]$imDat,size=3,expand=c(4096,8192))$segim, # Expand the cosmic rays by a pixel either side (i.e. size=3)
+                            profoundMakeSegimDilate(segim=hdulist[[dqIndex+3]]$imDat,size=3,expand=c(4096,8192))$segim )
+  hdrList[[expName]] = hdulist[[sciIndex]]$hdr
+
+}
+
+
+#if (toPlot){par(mfrow=c(2,4))} # For plotting, set the shape of the subplots
+
+# Get all DEVILS sources that are present in this exposure
+foundSources = which(toupper(substr(dfDEVILS$name_exp1,1,6)) == substr(obset,1,6))
+for (idx in foundSources){
+  cat(idx,'\n')
+  sourceName = format(dfDEVILS$UID[idx],scientific=FALSE)
+  cat(glue("INFO: UID: {sourceName}\n  {dfDEVILS$num_exps[idx]} exposures found: \n\n"))
+  
+  imgCutList = list()
+  dqCutList = list()
+  maskList = list()
+  psfList = list()
+  for (jj in seq(1,dfDEVILS$num_exps[idx])){
     
-    expName = substr(expFiles[jj],1,9)
-    imgList[[expName]] = list(hdulist[[sciIndex]]$imDat, hdulist[[sciIndex+3]]$imDat)
-    dqList[[expName]] = list( profoundMakeSegimDilate(segim=hdulist[[dqIndex]]$imDat,size=3,expand=c(4096,8192))$segim, # Expand the cosmic rays by a pixel either side (i.e. size=3)
-                              profoundMakeSegimDilate(segim=hdulist[[dqIndex+3]]$imDat,size=3,expand=c(4096,8192))$segim )
-    hdrList[[expName]] = hdulist[[sciIndex]]$hdr
-  
+    expName = dfDEVILS[[glue('name_exp{jj}')]][idx]
+    expExt = dfDEVILS[[glue('chip_exp{jj}')]][idx] - (-1)^dfDEVILS[[glue('chip_exp{jj}')]][idx]
+    srcLoc = c(dfDEVILS[[glue('x_exp{jj}')]][idx], dfDEVILS[[glue('y_exp{jj}')]][idx])
+      
+    cat('    > ',jj,': ',expName,' [',expExt,']\n', sep='')
+    
+    imgCutList[[expName]] = magcutout(imgList[[expName]][[expExt]], loc=srcLoc, box=cutoutBox, plot=FALSE)$image
+    dqCutList[[expName]] = magcutout(dqList[[expName]][[expExt]], loc=srcLoc, box=cutoutBox, plot=FALSE)$image
+    maskList[[expName]] = apply(apply(dqCutList[[expName]], c(1,2), mask_pixel), c(1,2), as.numeric )
+    
+    psfFilename = glue('{psfsDir}/{sourceName}_{dfDEVILS$name_exp1[idx]}_psf.fits')
+    if (!file.exists(psfFilename)){
+      system(glue("Rscript {psfScriptPath} {psfsDir} {sourceName}_{dfDEVILS$name_exp1[idx]} {dfDEVILS$chip_exp1[idx]} {dfDEVILS$x_exp1[idx]} {dfDEVILS$y_exp1[idx]} 0.0 13.0"))
+    }
+    psfList[[expName]] = Rfits_read_image(psfFilename,ext=1)$imDat
+    
   }
   
+  printf("INFO: Creating median stack of {length(imgCutList)} cutout images.")
+  imgCutMedian = median_stack(images=imgCutList, dqmaps=dqCutList, plot=FALSE)
   
-  #if (toPlot){par(mfrow=c(2,4))} # For plotting, set the shape of the subplots
+  ### Run profoundProfound on the median stack of cutouts:
+  printf("INFO: Creating segmentation map for median stacked image.")
+  seg = profoundProFound(image=imgCutMedian, sigma=1.5, dilete=5, skycut=1.2, SBdilate=2.5, tol=7, reltol=2, ext=7, plot=toPlot)
   
-  # Get all DEVILS sources that are present in this exposure
-  foundSources = which(toupper(substr(dfDEVILS$name_exp1,1,6)) == substr(obsetsDF$dataset[ii],1,6))
-  for (idx in foundSources[4:4]){
-    cat(idx,'\n')
-    sourceName = format(dfDEVILS$UID[idx],scientific=FALSE)
-    cat(glue("INFO: UID: {sourceName}\n  {dfDEVILS$num_exps[idx]} exposures found: \n\n"))
+  ### Set up Found2Fit objects for each exposure
+  printf("INFO: Generating found2Fits objects for each exposure cutout.")
+  if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}_{modelName}_frame_cutouts.png"), width=720, height=720, pointsize=16)}
+  if (toPlot|toSave){par(mfrow=c(2,2), mar = c(1,1,1,1))}
+  found2Fits = list()
+  #Example foreach from sbellstedt:  foreach(ii=1:length(IDs$CATAID), .inorder=FALSE)%dopar%{ # .packages='packages needed for execution', .export/.noexport, .combine='c','+','*','rbind','cbind'
+  for (jj in seq(1,dfDEVILS$num_exps[idx])){
+    ### Read required info from header.
+    magZP = 35.796 #from_header(hdrList[[jj]], 'PHOTZPT', to=as.numeric) 
+    ccdGain = 1 #from_header(hdrList[[jj]], 'CCDGAIN', to=as.numeric) # This is in the previous HDU, but it's always 1 for HST ACS
     
-    imgCutList = list()
-    dqCutList = list()
-    maskList = list()
-    psfList = list()
-    for (jj in seq(1,dfDEVILS$num_exps[idx])){
-      
-      expName = dfDEVILS[[glue('name_exp{jj}')]][idx]
-      expExt = dfDEVILS[[glue('chip_exp{jj}')]][idx] - (-1)^dfDEVILS[[glue('chip_exp{jj}')]][idx]
-      srcLoc = c(dfDEVILS[[glue('x_exp{jj}')]][idx], dfDEVILS[[glue('y_exp{jj}')]][idx])
-        
-      cat('    > ',jj,': ',expName,' [',expExt,']\n', sep='')
-      
-      imgCutList[[expName]] = magcutout(imgList[[expName]][[expExt]], loc=srcLoc, box=cutoutBox, plot=FALSE)$image
-      dqCutList[[expName]] = magcutout(dqList[[expName]][[expExt]], loc=srcLoc, box=cutoutBox, plot=FALSE)$image
-      maskList[[expName]] = apply(apply(dqCutList[[expName]], c(1,2), mask_pixel), c(1,2), as.numeric )
-      
-      psfFilename = glue('{psfsDir}/{sourceName}_{dfDEVILS$name_exp1[idx]}_psf.fits')
-      if (!file.exists(psfFilename)){
-        system(glue("Rscript {psfScriptPath} {psfsDir} {sourceName}_{dfDEVILS$name_exp1[idx]} {dfDEVILS$chip_exp1[idx]} {dfDEVILS$x_exp1[idx]} {dfDEVILS$y_exp1[idx]} 0.0 13.0"))
-      }
-      psfList[[expName]] = Rfits_read_image(psfFilename,ext=1)$imDat
-      
-    }
+    ### Produce the sigma map
+    #skyMap = profoundProFound(imgCutList[[jj]], mask = maskList[[jj]], segim = seg$segim, size=5,
+    #                          box = c(80,80), type='bicubic',
+    #                          magzero=magZP, gain=ccdGain, #pixscale=pixScale, # header=header,
+    #                          stats=TRUE, plot=FALSE)
+  
+    #sigma = profoundMakeSigma(imgCutList[[jj]],sky=skyMap$sky,skyRMS=skyMap$skyRMS,objects=seg$objects,mask=maskList[[jj]],gain=ccdGain,plot=FALSE)
     
-    printf("INFO: Creating median stack of {length(imgCutList)} cutout images.")
-    imgCutMedian = median_stack(images=imgCutList, dqmaps=dqCutList, plot=FALSE)
+    #found2Fits[[jj]] = profuseFound2Fit(imgCutList[[jj]], segim=seg$segim, sigma=sigma, psf=psfList[[jj]],
+    #                                    magzero=magZP, gain = ccdGain, 
+    #                                    Ncomp=n_comps,
+    #                                    sing_nser_fit=sing_nser_fit,bulge_circ=bulge_circ,
+    #                                    disk_nser_fit=disk_nser_fit,  disk_nser=disk_nser,
+    #                                    bulge_nser_fit=bulge_nser_fit, bulge_nser=bulge_nser, bulge_circ=bulge_circ,
+    #                                    pos_delta = 10, # does this pos_delta value work for the biggest galaxies?
+    #                                    tightcrop = FALSE, deblend_extra=FALSE, fit_extra=FALSE, rough=roughFit, plot=toPlot)
     
-    ### Run profoundProfound on the median stack of cutouts:
-    printf("INFO: Creating segmentation map for median stacked image.")
-    seg = profoundProFound(image=imgCutMedian, sigma=1.5, dilete=5, skycut=1.2, SBdilate=2.5, tol=7, reltol=2, ext=7, plot=toPlot)
+    expName = dfDEVILS[[glue('name_exp{jj}')]][idx]
+    expExt = dfDEVILS[[glue('chip_exp{jj}')]][idx] - (-1)^dfDEVILS[[glue('chip_exp{jj}')]][idx]
+    srcLoc = c(dfDEVILS[[glue('x_exp{jj}')]][idx],dfDEVILS[[glue('y_exp{jj}')]][idx]) # need to move this out of the loop and just use the first exposure's position as the location.
     
-    ### Set up Found2Fit objects for each exposure
-    printf("INFO: Generating found2Fits objects for each exposure cutout.")
-    if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}_{modelName}_frame_cutouts.png"), width=720, height=720, pointsize=16)}
-    if (toPlot|toSave){par(mfrow=c(2,2), mar = c(1,1,1,1))}
-    found2Fits = list()
-    #foreach(ii=1:length(IDs$CATAID), .inorder=FALSE)%dopar%{ # .packages='packages needed for execution', .export/.noexport, .combine='c','+','*','rbind','cbind'
-    for (jj in seq(1,dfDEVILS$num_exps[idx])){
-      ### Read required info from header.
-      magZP = 35.796 #from_header(hdrList[[jj]], 'PHOTZPT', to=as.numeric) 
-      ccdGain = 1 #from_header(hdrList[[jj]], 'CCDGAIN', to=as.numeric) # This is in the previous HDU, but it's always 1 for HST ACS
-      
-      ### Produce the sigma map
-      #skyMap = profoundProFound(imgCutList[[jj]], mask = maskList[[jj]], segim = seg$segim, size=5,
-      #                          box = c(80,80), type='bicubic',
-      #                          magzero=magZP, gain=ccdGain, #pixscale=pixScale, # header=header,
-      #                          stats=TRUE, plot=FALSE)
     
-      #sigma = profoundMakeSigma(imgCutList[[jj]],sky=skyMap$sky,skyRMS=skyMap$skyRMS,objects=seg$objects,mask=maskList[[jj]],gain=ccdGain,plot=FALSE)
-      
-      #found2Fits[[jj]] = profuseFound2Fit(imgCutList[[jj]], segim=seg$segim, sigma=sigma, psf=psfList[[jj]],
-      #                                    magzero=magZP, gain = ccdGain, 
-      #                                    Ncomp=n_comps,
-      #                                    sing_nser_fit=sing_nser_fit,bulge_circ=bulge_circ,
-      #                                    disk_nser_fit=disk_nser_fit,  disk_nser=disk_nser,
-      #                                    bulge_nser_fit=bulge_nser_fit, bulge_nser=bulge_nser, bulge_circ=bulge_circ,
-      #                                    pos_delta = 10, # does this pos_delta value work for the biggest galaxies?
-      #                                    tightcrop = FALSE, deblend_extra=FALSE, fit_extra=FALSE, rough=roughFit, plot=toPlot)
-      
-      expName = dfDEVILS[[glue('name_exp{jj}')]][idx]
-      expExt = dfDEVILS[[glue('chip_exp{jj}')]][idx] - (-1)^dfDEVILS[[glue('chip_exp{jj}')]][idx]
-      srcLoc = c(dfDEVILS[[glue('x_exp{jj}')]][idx],dfDEVILS[[glue('y_exp{jj}')]][idx]) # need to move this out of the loop and just use the first exposure's position as the location.
-      
-      
-      found2Fits[[jj]] = profuseFound2Fit_(imgList[[expName]][[expExt]], psf=psfList[[expName]], segim = seg$segim,
-                                          mask=maskList[[expName]],SBdilate=2.5,reltol=1.5,ext=5,
-                                          loc=srcLoc, cutbox=cutoutBox, loc_use=FALSE, loc_fit=TRUE,
-                                          magzero=magZP, gain = ccdGain, 
-                                          Ncomp=modelOpts$n_comps,
-                                          sing_nser_fit=modelOpts$sing_nser_fit,
-                                          disk_nser_fit=modelOpts$disk_nser_fit,  disk_nser=modelOpts$disk_nser,
-                                          bulge_nser_fit=modelOpts$bulge_nser_fit, bulge_nser=modelOpts$bulge_nser, bulge_circ=modelOpts$bulge_circ,
-                                          pos_delta = 10, # does this pos_delta value work for the biggest galaxies?
-                                          tightcrop = FALSE, deblend_extra=FALSE, fit_extra=FALSE, rough=roughFit, plot=toPlot|toSave)
+    found2Fits[[jj]] = profuseFound2Fit_(imgList[[expName]][[expExt]], psf=psfList[[expName]], segim = seg$segim,
+                                        mask=maskList[[expName]],SBdilate=2.5,reltol=1.5,ext=5,
+                                        loc=srcLoc, cutbox=cutoutBox, loc_use=FALSE, loc_fit=TRUE,
+                                        magzero=magZP, gain = ccdGain, 
+                                        Ncomp=modelOpts$n_comps,
+                                        sing_nser_fit=modelOpts$sing_nser_fit,
+                                        disk_nser_fit=modelOpts$disk_nser_fit,  disk_nser=modelOpts$disk_nser,
+                                        bulge_nser_fit=modelOpts$bulge_nser_fit, bulge_nser=modelOpts$bulge_nser, bulge_circ=modelOpts$bulge_circ,
+                                        pos_delta = 10, # does this pos_delta value work for the biggest galaxies?
+                                        tightcrop = FALSE, deblend_extra=FALSE, fit_extra=FALSE, rough=roughFit, plot=toPlot|toSave)
 
-      
-      if (jj > 1){
-        # Offsets calculated as the difference between the x/y values listed in the data frame.
-        found2Fits[[jj]]$Data$offset = c(0,0)
-        #found2Fits[[jj]]$Data$offset = c(dfDEVILS[[glue('x_exp{jj}')]][idx] - dfDEVILS[['x_exp1']][idx],
-        #                                 dfDEVILS[[glue('y_exp{jj}')]][idx] - dfDEVILS[['y_exp1']][idx])
-        
-      }
-      
-      # Need to extend model beyond calc region
-      found2Fits[[jj]]$Data$usecalcregion = FALSE
-      
-      if(toPlot|toSave){
-        text(0.1*cutoutBox[1],0.925*cutoutBox[2],as.character(dfDEVILS[[glue('name_exp{jj}')]][idx]), adj=0, col='white', cex=1.75)
-      }
+    
+    if (jj > 1){
+      # Offsets calculated as the difference between the x/y values listed in the data frame.
+      found2Fits[[jj]]$Data$offset = c(0,0)
+      #found2Fits[[jj]]$Data$offset = c(dfDEVILS[[glue('x_exp{jj}')]][idx] - dfDEVILS[['x_exp1']][idx],
+      #                                 dfDEVILS[[glue('y_exp{jj}')]][idx] - dfDEVILS[['y_exp1']][idx])
       
     }
     
-    if(toSave){dev.off()}
+    # Need to extend model beyond calc region
+    found2Fits[[jj]]$Data$usecalcregion = FALSE
     
-    dataList = lapply(found2Fits, `[[`, 'Data') # For each `found2Fits` instance, pull out the `Data` object
-    
-    # Set additional parameters to the Data list for fitting multiple images.
-    dataList$mon.names = found2Fits[[1]]$Data$mon.names
-    dataList$parm.names = found2Fits[[1]]$Data$parm.names
-    dataList$N = found2Fits[[1]]$Data$N
-    
-    printf("INFO: Running Highlander optimisation of model.")
-    highFit = Highlander(found2Fits[[1]]$Data$init, Data=dataList, likefunc=profitLikeModel, ablim=1)
-                         #LDargs = optimOpts$LD)
-    
-    for (jj in seq(4)){
-      dataList[[jj]]$usecalcregion = FALSE
+    if(toPlot|toSave){
+      text(0.1*cutoutBox[1],0.925*cutoutBox[2],as.character(dfDEVILS[[glue('name_exp{jj}')]][idx]), adj=0, col='white', cex=1.75)
     }
     
-    if (toPlot|toSave){
-      if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}_{modelName}_model_residuals.png"), width=1000, height=650, pointsize=20)}
-      printf("INFO: Generating plots of optimised models.")
-      profitLikeModel(highFit$parm, Data=dataList, makeplots=TRUE, rough=FALSE, plotchisq=TRUE)
+  }
+  
+  if(toSave){dev.off()}
+  
+  dataList = lapply(found2Fits, `[[`, 'Data') # For each `found2Fits` instance, pull out the `Data` object
+  
+  # Set additional parameters to the Data list for fitting multiple images.
+  dataList$mon.names = found2Fits[[1]]$Data$mon.names
+  dataList$parm.names = found2Fits[[1]]$Data$parm.names
+  dataList$N = found2Fits[[1]]$Data$N
+  
+  printf("INFO: Running Highlander optimisation of model.")
+  highFit = Highlander(found2Fits[[1]]$Data$init, Data=dataList, likefunc=profitLikeModel, ablim=1)
+                       #LDargs = optimOpts$LD)
+  
+  for (jj in seq(4)){
+    dataList[[jj]]$usecalcregion = FALSE
+  }
+  
+  if (toPlot|toSave){
+    if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}_{modelName}_model_residuals.png"), width=1000, height=650, pointsize=20)}
+    printf("INFO: Generating plots of optimised models.")
+    profitLikeModel(highFit$parm, Data=dataList, makeplots=TRUE, rough=FALSE, plotchisq=TRUE)
+    if (toSave){dev.off()}
+  }
+  
+  if (toPlot|toSave){
+    for (jj in seq(1,dfDEVILS$num_exps[idx])){
+      if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-exp{jj}_{modelName}_model_residuals.png"), width=1000, height=650, pointsize=20)}
+      profitLikeModel(highFit$parm, Data=dataList[[jj]], makeplots=TRUE, rough=FALSE, plotchisq=TRUE)
       if (toSave){dev.off()}
     }
-    
-    if (toPlot|toSave){
-      for (jj in seq(1,dfDEVILS$num_exps[idx])){
-        if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-exp{jj}_{modelName}_model_residuals.png"), width=1000, height=650, pointsize=20)}
-        profitLikeModel(highFit$parm, Data=dataList[[jj]], makeplots=TRUE, rough=FALSE, plotchisq=TRUE)
-        if (toSave){dev.off()}
-      }
-    }
-    
-    
-    remakeModel = profitRemakeModellist(parm = highFit$parm, Data = dataList[[1]])
-    optimModellist = remakeModel$modellist
-    
-    ### Save plots of resulting model ###
-    if(toSave & modelOpts$n_comps>1){
-      png(filename = glue("{plotDir}/{sourceName}/{sourceName}_{modelName}_radial_profile.png"), width=720, height=480, pointsize=16)
-      profitEllipsePlot(Data=dataList[[1]],modellist=optimModellist,pixscale=pixScaleHST,SBlim=25)
-      dev.off()
-    }
-    
-    ### Save outputs to .RDS file ###
-    printf("INFO: Creating segmentation map for median stacked image.")
-    outputs = list(idx=idx,
-                   sourceName=sourceName,
-                   modelName=modelName,
-                   modelOptions=modelOpts,
-                   optimOptions=optimOpts,
-                   cutoutBox=cutoutBox,
-                   exposureFiles=expFiles,
-                   dqList=dqCutList,
-                   imgList=imgCutList,
-                   imgMedian=imgCutMedian,
-                   hdrList=hdrList,
-                   maskList=maskList,
-                   psfList=psfList,
-                   segMap=seg,
-                   found2FitList=found2Fits,
-                   dataList=dataList,
-                   highFit=highFit,
-                   optimModellist=optimModellist)
-    
-    dir.create(file.path(outDir, sourceName), showWarnings = FALSE)
-    outputFilename = glue('{outDir}/{sourceName}/{sourceName}_{modelName}_output.rds')
-    saveRDS(object=outputs, file=outputFilename)
-    
   }
   
   
+  remakeModel = profitRemakeModellist(parm = highFit$parm, Data = dataList[[1]])
+  optimModellist = remakeModel$modellist
+  
+  ### Save plots of resulting model ###
+  if(toSave & modelOpts$n_comps>1){
+    png(filename = glue("{plotDir}/{sourceName}/{sourceName}_{modelName}_radial_profile.png"), width=720, height=480, pointsize=16)
+    profitEllipsePlot(Data=dataList[[1]],modellist=optimModellist,pixscale=pixScaleHST,SBlim=25)
+    dev.off()
+  }
+  
+  ### Save outputs to .RDS file ###
+  printf("INFO: Creating segmentation map for median stacked image.")
+  outputs = list(idx=idx,
+                 sourceName=sourceName,
+                 modelName=modelName,
+                 modelOptions=modelOpts,
+                 optimOptions=optimOpts,
+                 cutoutBox=cutoutBox,
+                 exposureFiles=expFiles,
+                 dqList=dqCutList,
+                 imgList=imgCutList,
+                 imgMedian=imgCutMedian,
+                 hdrList=hdrList,
+                 maskList=maskList,
+                 psfList=psfList,
+                 segMap=seg,
+                 found2FitList=found2Fits,
+                 dataList=dataList,
+                 highFit=highFit,
+                 optimModellist=optimModellist)
+  
+  dir.create(file.path(outDir, sourceName), showWarnings = FALSE)
+  outputFilename = glue('{outDir}/{sourceName}/{sourceName}_{modelName}_output.rds')
+  saveRDS(object=outputs, file=outputFilename)
+  
 }
+
 
 
 result = readRDS('/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/Fitting_Outputs/101505979732574752/101505979732574752_deV-exp_output.rds')
