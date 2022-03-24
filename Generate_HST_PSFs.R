@@ -54,6 +54,7 @@ TinyTimACSR = function(input_dir, name, chip, x, y, filter, spectrum=13, size=3.
 # Rscript Generate_HST_PSFs.R [dir] [name] [chip] [x] [y] [focus=0.0] [size=10.0] [filter=F814W] [spectrum=13] 
 args = commandArgs(trailingOnly = TRUE) # Parse arguments (if given)
 #args = c('/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/PSFs','test1','2','1000','1000','NA','NA')
+#args = c('/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/DEVILS_Structural_Decomposition/PSFs/Test_PSFs/Focus','testfocus1','2','1000','1000','auto','NA')
 
 if (length(args) < 5) { # get command line args
   stop(glue("Require, at least, the arguments: [name] [chip] [x] [y], but only {length(args)} were given."))
@@ -76,7 +77,7 @@ if (length(args) < 5) { # get command line args
   if (is.na(args[6]) | args[6]=='NA') {  # focus
     focus = 0.0
   } else if (args[6] == 'auto'){
-    focus = get_focus()
+    focus = 0.0#get_focus()
   } else {
     focus = as.numeric(args[6])
     if (is.na(focus)) {stop(glue("focus must either be 'auto' or able to be coerced into float, but instead received {args[6]}."))}
