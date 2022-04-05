@@ -12,10 +12,10 @@ library(glue)
 #.libPaths(c(libPath,.libPaths()))
 
 evalGlobal = TRUE
-Sys.setenv(TINYTIM='/Users/00092380/Documents/Software/tinytim') # Need to change for Pawsey machine.
 
 TinyTimACSR = function(input_dir, name, chip, x, y, filter, spectrum=13, size=3.0, focus=0, exBmV=0, jitter=0){
   tinyTimPath = '/Users/00092380/Documents/Software/tinytim'
+  #tinyTimPath = '/group/pawsey0160/rhwcook/Programs/TinyTim/'
   setwd(input_dir)
   
   psf_runfile <- paste(input_dir,'/',name,'_run',sep='')
@@ -35,16 +35,19 @@ TinyTimACSR = function(input_dir, name, chip, x, y, filter, spectrum=13, size=3.
   cat("EOF" ,'\n',file=psf_runfile,append=TRUE)
   
   
-  system(paste('source ',input_dir,'/',name,'_run',sep=''))
+  invisible(capture.output(system(paste('source ',input_dir,'/',name,'_run',sep=''))))
   Sys.sleep(1)
-  system(paste(tinyTimPath,'/tiny2 ',input_dir,'/',name,'_parameter_file',sep=''))
-  Sys.sleep(3)
-  system(paste(tinyTimPath,'/tiny3 ',input_dir,'/',name,'_parameter_file',sep=''))
+  invisible(capture.output(system(paste(tinyTimPath,'/tiny2 ',input_dir,'/',name,'_parameter_file',sep=''))))
+  Sys.sleep(5) # need to sleep so
+  invisible(capture.output(system(paste(tinyTimPath,'/tiny3 ',input_dir,'/',name,'_parameter_file',sep=''))))
   
+  Sys.sleep(1)
   system(paste('rm ', input_dir, '/', name, '_image00_psf.fits',sep= '')) 
-  system(paste('rm ', input_dir, '/*_parameter_*',sep= ''))
-  system(paste('rm ', input_dir, '/*.tt3',sep= ''))
-  system(paste('rm ', input_dir, '/*_run',sep= ''))
+  system(paste('rm ', input_dir, '/', name, '_parameter_file',sep= ''))
+  system(paste('rm ', input_dir, '/', name, '_image.tt3',sep= ''))
+  system(paste('rm ', input_dir, '/', name, '_run',sep= ''))
+  
+  Sys.sleep(1)
   system(paste('mv ', name,'_image00.fits ', name,'_psf.fits',sep= ''))
   
   #setwd(wrk_dir)
@@ -55,6 +58,13 @@ TinyTimACSR = function(input_dir, name, chip, x, y, filter, spectrum=13, size=3.
 args = commandArgs(trailingOnly = TRUE) # Parse arguments (if given)
 #args = c('/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/PSFs','test1','2','1000','1000','NA','NA')
 #args = c('/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/DEVILS_Structural_Decomposition/PSFs/Test_PSFs/Focus','testfocus1','2','1000','1000','auto','NA')
+
+computer='local'
+if (computer=='local'){
+  Sys.setenv(TINYTIM='/Users/00092380/Documents/Software/tinytim')
+} else if (computer=='magnus'){
+  Sys.setenv(TINYTIM='/group/pawsey0160/rhwcook/Programs/TinyTim/') # Magnus on Pawsey.
+}
 
 if (length(args) < 5) { # get command line args
   stop(glue("Require, at least, the arguments: [name] [chip] [x] [y], but only {length(args)} were given."))
