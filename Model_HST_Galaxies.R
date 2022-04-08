@@ -76,7 +76,7 @@ library(assertthat)
 
 evalglobal = TRUE # Set global evaluate
 options(stringsAsFactors=FALSE) # adjust string problems
-options(scipen=999) # suppress scientific notation
+#options(scipen=999) # suppress scientific notation
 
 ###############################
 ### Define Useful Functions ###
@@ -192,13 +192,12 @@ profitImageScale = function(z, zlim, col = heat.colors(12),
   if(add.axis) {axis(axis.pos, padj=axis.padj, tck=axis.tck)}
 }
 
-multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext,
+multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magzps,
                                whichcomponents=list(sersic="all",moffat="all",ferrer="all",pointsource="all"),
                                cmap = rev(colorRampPalette(brewer.pal(9,'RdYlBu'))(100)),
                                errcmap = rev(c("#B00000",colorRampPalette(brewer.pal(9,'RdYlBu'))(100)[2:99],"#0000B0")),
                                errischisq=FALSE, dofs=0){
   
-  magZP = datalist[[1]]$magzero
   contlw = 3
   maxsigma = 5
   
@@ -230,8 +229,11 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext,
     image = datalist[[ii]]$image
     region = datalist[[ii]]$region
     sigma = datalist[[ii]]$sigma
+    magZP = magzps[[ii]] #datalist[[ii]]$magzero
+    print(magZP)
     
     fitModellist = profitRemakeModellist(parm = parm, Data = datalist[[ii]], offset = datalist[[ii]]$offset)$modellist
+    print(fitModellist)
     modelimage = profitMakeModel(modellist = fitModellist,
                                  magzero = magZP, psf = datalist[[ii]]$psf, dim = dim(image),
                                  psfdim = dim(datalist[[ii]]$psf), whichcomponents = whichcomponents)$z
@@ -362,7 +364,6 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext,
 }
 
 
-
 ##############################
 ### Define some parameters ###
 ##############################
@@ -402,15 +403,15 @@ if (! file.exists(args$inputcat)){
   stop(glue("ERROR: The input catalogue '{args$inputcat}' does not exist."))
 }
 
-magZP = 35.796 #from_header(hdrCutList[[jj]], 'PHOTZPT', to=as.numeric) 
+#magZP = 35.796 #from_header(hdrCutList[[jj]], 'PHOTZPT', to=as.numeric) 
 ccdGain = 1 #from_header(hdrCutList[[jj]], 'CCDGAIN', to=as.numeric) # This is in the previous HDU, but it's always 1 for HST ACS
 pixScaleHST = 0.05 # The pixel scale of HST ACS non-rotated and raw .flt exposure frames.
 
 sizePSF = 5.0 # arcsec
 trimPSF = TRUE # whether to trim the TinyTim PSF to have pixel dimensions that match the size of sizePSF based on pixelScaleHST
-clobberPSF = TRUE # IF TRUE, always creates a new PSF using TinyTim; else a new PSF will only be created if one does not already exist.
+clobberPSF = F#TRUE # IF TRUE, always creates a new PSF using TinyTim; else a new PSF will only be created if one does not already exist.
 
-maxExps = 4 # The maximum number of exposures to use for a single fit
+maxExps = 8 # The maximum number of exposures to use for a single fit
 
 toPlot = FALSE#TRUE # Whether to show plots
 toSave = TRUE # Whether to save plots
@@ -521,6 +522,7 @@ for (idx in seq(1,nrow(dfCat))){
   maskList = list()
   psfList = list()
   
+  srcLocList = list()
   imgWarpList = list()
   maskWarpList = list()
   
@@ -533,20 +535,23 @@ for (idx in seq(1,nrow(dfCat))){
     obsetID = paste0( substr(toupper(expName), 1, 6), '010' )
     
     # Establish which proposal ID this exposure came from.
-    if (substr(expName,1,3) == 'j8p'){proposalID = 'PID09822'}
-    else if (substr(expName,1,3) == 'j8x') {proposalID = 'PID10092'}
-    else if (substr(expName,1,3) == 'jco') {proposalID = 'PID13641'}
-    else if (substr(expName,1,3) == 'jbo') {proposalID = 'PID12440'}
-    else if (substr(expName,1,3) == 'jbh') {proposalID = 'PID12328'}
-    else {printf("WARNING: No proposal ID could be found for exposure {expName}.")}
+    if (substr(expName,1,3) == 'j8p'){
+      proposalID = 'PID09822'
+    } else if (substr(expName,1,3) == 'j8x'){
+      proposalID = 'PID10092'
+    } else if (substr(expName,1,3) == 'jco'){
+      proposalID = 'PID13641'
+    } else if (substr(expName,1,3) == 'jbo'){
+      proposalID = 'PID12440'
+    } else if (substr(expName,1,3) == 'jbh'){
+      proposalID = 'PID12328'
+    } else {
+      printf("WARNING: No proposal ID could be found for exposure {expName}.")
+    }
     
-    # Get source position info in exposure
-    expChip = dfCat[[glue('chip_exp{jj}')]][idx]
-    expx = dfCat[[glue('x_exp{jj}')]][idx]
-    expy = dfCat[[glue('y_exp{jj}')]][idx]
-    srcLoc = c(expx, expy)
     
     # The FITS extensions indices for the chip
+    expChip = dfCat[[glue('chip_exp{jj}')]][idx]
     sciIndex = ifelse(expChip == 1, 2+3, 2) # The index in HST fits files that points to the science image HDU
     errIndex = ifelse(expChip == 1, 3+3, 3) # The index in HST fits files that points to the error HDU
     dqIndex = ifelse(expChip == 1, 4+3, 4) # The index in HST fits files that points to the data quality HDU
@@ -556,36 +561,48 @@ for (idx in seq(1,nrow(dfCat))){
     printf("INFO: Loading exposure #{jj}: {imgFilename}")
     hdulist = Rfits_read_all(imgFilename, pointer=FALSE)
     
-    img = hdulist[[sciIndex]]$imDat
-    dq = profoundMakeSegimDilate(segim=hdulist[[dqIndex]]$imDat,size=3,expand=c(4096,8192))$segim # Expand the cosmic rays by a pixel either side (i.e. size=3)
-    hdr = hdulist[[sciIndex]]$hdr
+    img = hdulist[[sciIndex]] # this is an Rfits_image object
+    dq = hdulist[[dqIndex]]
+    
+    #hdr = hdulist[[sciIndex]]$hdr
+    #hdrRaw = hdulist[[sciIndex]]$raw
+    
+    # Get source position info in exposure
+    srcLocList[[expName]] = Rwcs_s2p(RA=dfCat[['RAcen']][idx],Dec=dfCat[['DECcen']][idx], header = img$raw)
+    #expx = dfCat[[glue('x_exp{jj}')]][idx]
+    #expy = dfCat[[glue('y_exp{jj}')]][idx]
+    #srcLoc = c(expx, expy)
     
     # Calculate magnitude zeropoint
-    fluxlambda = from_header(hdr = hdr, keys = 'PHOTFLAM', as=as.numeric)
-    pivotlambda = from_header(hdr = hdr, keys = 'PHOTPLAM', as=as.numeric)
-    magzpList[[expName]] = -2.5*log10(fluxlambda) - 5*log10(pivotlambda) - 2.408 # instrumental zeropoint magnitudes in AB mags (from https://www.stsci.edu/hst/instrumentation/acs/data-analysis/zeropoints)
+    fluxlambda = from_header(hdr = img$hdr, keys = 'PHOTFLAM', as=as.numeric)
+    pivotlambda = from_header(hdr = img$hdr, keys = 'PHOTPLAM', as=as.numeric)
+    expTime = from_header(hdr = hdulist[[1]]$hdr, keys = 'EXPTIME', as=as.numeric) # exposure time from first extension header
+    magzpList[[jj]] = -2.5*log10(fluxlambda/expTime) - 5*log10(pivotlambda) - 2.408 # instrumental zeropoint magnitudes in AB mags (from https://www.stsci.edu/hst/instrumentation/acs/data-analysis/zeropoints)
     
     # Now get cutouts and WCS-adjusted headers
-    ### TODO: change this to Rwcs_cutout. Does that exist?
-    printf("INFO: Source location in {expName}: {srcLoc[1]}, {srcLoc[2]}")
-    wcsCutout = magcutoutWCS(img, header=hdr, loc=srcLoc, loc.type='image', box=cutoutBox, plot=FALSE)
-    imgCutList[[expName]] = wcsCutout$image
-    hdrCutList[[expName]] = wcsCutout$header
+    ### TODO: change this to Rwcs_cutout. Does that exist? Yes, but it's hidden in the indexing code of Rfits_image
+    printf("INFO: Source location in {expName}: {srcLocList[[jj]][1]}, {srcLocList[[jj]][2]}")
+    #wcsCutout = magcutoutWCS(img, header=hdr, loc=srcLocList[[jj]], loc.type='image', box=cutoutBox, plot=FALSE, )
+    imgCutList[[expName]] = img[srcLocList[[jj]][1], srcLocList[[jj]][2], box=cutoutBox] #wcsCutout$image
+    hdrCutList[[expName]] = imgCutList[[expName]]$hdr
     
-    dqCutList[[expName]] = magcutout(dq, loc=srcLoc, box=cutoutBox, plot=FALSE)$image
-    maskList[[expName]] = apply(apply(dqCutList[[expName]], c(1,2), mask_pixel), c(1,2), as.integer) # Convert the binary dq map to a list of 1s and 0s
+    #magimage(imgCutList[[jj]]$imDat)
+    
+    #dqCutList[[expName]] = magcutout(dq, loc=srcLocList[[jj]], box=cutoutBox, plot=FALSE)$image
+    dqCutList[[expName]] = dq[srcLocList[[jj]][1], srcLocList[[jj]][2], box=cutoutBox] # magcutout(dq, loc=srcLocList[[jj]], box=cutoutBox, plot=FALSE)$image
+    dqDilated = profoundMakeSegimDilate(segim=dqCutList[[expName]]$imDat,size=3,expand=seq(4096,8192)) # Expand the cosmic rays by a pixel either side (i.e. size=3)
+    maskList[[expName]] = apply(apply(dqDilated$segim, c(1,2), mask_pixel), c(1,2), as.integer) # Convert the binary dq map to a list of 1s and 0s
     #maskList[[expName]][is.na(imgCutList[[expName]])] = 1 # Also set missing values (NaNs) to be masked
     
     # Calculate the initial sky statistics of each exposure, so that they can be inverse-variance stacked later
-    skyGrid = profoundMakeSkyGrid(image=imgCutList[[expName]], mask=maskList[[expName]], box=skyBoxDims)
+    skyGrid = profoundMakeSkyGrid(image=imgCutList[[expName]]$imDat, mask=maskList[[expName]], box=skyBoxDims)
     
     # Warp images and dqs onto a common WCS.
     printf("INFO: Warping image and dq map to a common WCS")
-    imgWarpList[[expName]] = Rwcs(image_in=imgCutList[[jj]], header_in=hdrCutList[[jj]], header_out=hdrCutList[[1]])$image
+    imgWarpList[[expName]] = magwarp(image_in=imgCutList[[jj]]$imDat, header_in=hdrCutList[[jj]], header_out=hdrCutList[[1]])$image
     maskWarpList[[expName]] = apply(round(magwarp(image_in=maskList[[jj]], header_in=hdrCutList[[jj]], header_out=hdrCutList[[1]], doscale=FALSE)$image, digits=0), c(1,2), as.integer)
     skyList[[expName]] = magwarp(image_in=skyGrid$sky, header_in=hdrCutList[[jj]], header_out=hdrCutList[[1]])$image
     skyRMSList[[expName]] = magwarp(image_in=skyGrid$skyRMS, header_in=hdrCutList[[jj]], header_out=hdrCutList[[1]])$image
-    
     
     # Load or create PSF
     psfFilename = glue('{psfsDir}/{sourceName}_{expName}_psf.fits')
@@ -593,7 +610,7 @@ for (idx in seq(1,nrow(dfCat))){
       printf("INFO: Creating new PSF, saving to file '{psfFilename}'.")
       
       #>> Rscript Generate_HST_PSFs.R [dir] [name] [chip] [x] [y] [focus=0.0] [size=10.0] [filter=f814w] [spectrum=13]
-      print(glue("INFO: Running TinyTim with:\n>> Rscript {psfScriptPath} {psfsDir} {sourceName}_{expName} {expChip} {expx} {expy} 0.0 {sizePSF}"))
+      print(glue("INFO: Running TinyTim with:\n>> Rscript {psfScriptPath} {psfsDir} {sourceName}_{expName} {expChip} {srcLocList[[jj]][1]} {srcLocList[[jj]][2]} 0.0 {sizePSF}"))
       invisible(
         system(glue("Rscript {psfScriptPath} {psfsDir} {sourceName}_{expName} {expChip} {expx} {expy} 0.0 {sizePSF}"))
       )
@@ -655,14 +672,14 @@ for (idx in seq(1,nrow(dfCat))){
     
     if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-{expNameList[jj]}_sky_statistics.png"), width=720, height=720, pointsize=16)}
     if (toPlot|toSave){par(mfrow=c(2,2), mar = c(1,1,1,1))}
-    skyList[[expName]] = profoundProFound(image=imgCutList[[jj]], segim=segimList[[expName]], mask=maskList[[jj]],magzero = magZP, gain=ccdGain, plot=T,
-                                          sigma=1.5, skycut=0.75, SBdilate=3, size=31, box=c(150,150))#skyBoxDims)
+    skyList[[expName]] = profoundProFound(image=imgCutList[[jj]]$imDat, segim=segimList[[expName]], mask=maskList[[jj]],magzero = magzpList[[jj]], gain=ccdGain, plot=T,
+                                          sigma=1.5, skycut=0.75, SBdilate=3, size=15, box=c(150,150))#skyBoxDims)
     
     if (toPlot|toSave){
       plot(skyList[[expName]])
     }
     
-    imgCutList[[jj]] = imgCutList[[jj]] - skyList[[jj]]$sky
+    imgCutList[[jj]]$imDat = imgCutList[[jj]]$imDat - skyList[[jj]]$sky
     if(toSave){dev.off()}
   }
   
@@ -676,30 +693,39 @@ for (idx in seq(1,nrow(dfCat))){
       par(mfrow=c(2,4), mar = c(1.5,1.5,1.5,1.5), oma = c(0.25,0.25,0.25,0.25))
     }
     for (jj in seq(1,numExps)){
-      profoundSegimPlot(image=imgCutList[[jj]], segim=segimList[[jj]], mask=maskList[[jj]], bad=NA)
+      profoundSegimPlot(image=imgCutList[[jj]]$imDat, segim=segimList[[jj]], mask=maskList[[jj]], bad=NA)
       text(0.1*cutoutBox[1],0.925*cutoutBox[2],expNameList[jj], adj=0, col='red', cex=1.6)
     }
     if (toSave){dev.off()}
   }
   
-  ### Set up Found2Fit objects for each exposure
-  printf("INFO: Generating found2Fits objects for each exposure cutout.")
-  
+  ### Calculate offsets and rotations between frames
+  printf("INFO: Calculating offsets/rotations between exposures.")
   offsets = list() # The offsets are just the sub-pixel offsets between positions as the cutouts are already centered on the pixel positions.
-  rotations = list()
+  xrots = list()
+  yrots = list()
   
-  cds = from_header(hdrCutList[[1]], keys = c('CD1_1','CD1_2','CD2_1','CD2_2'), as=as.numeric)
-  xrot1 = rad2deg(atan2(cds[3], cds[1]))
+  cds = from_header(hdrCutList[[1]], keys = c('CD1_1','CD2_1','CD1_2','CD2_2'), as=as.numeric)
+  cdsign = sign(det(matrix(cds, ncol=2))) # Get the sign of the determinant for the CD matrix
+  
+  xrot1 = rad2deg(atan2(-cdsign*cds[2], cds[1]))
+  yrot1 = rad2deg(atan2(cdsign*cds[3], cds[4]))
   for (jj in seq(1,numExps)){ 
-    cds = from_header(hdrCutList[[jj]], keys = c('CD1_1','CD1_2','CD2_1','CD2_2'), as=as.numeric)
-    rotations[[jj]] = rad2deg(atan2(cds[3], cds[1]))
+    cds = from_header(hdrCutList[[jj]], keys = c('CD1_1','CD2_1','CD1_2','CD2_2'), as=as.numeric)
+    cdsign = sign(det(matrix(cds, ncol=2))) # Get the sign of the determinant for the CD matrix
     
-    offsets[[jj]] = c(dfCat[[glue('x_exp{jj}')]][idx]%%1 - dfCat[['x_exp1']][idx]%%1, dfCat[[glue('y_exp{jj}')]][idx]%%1 - dfCat[['y_exp1']][idx]%%1, xrot1 - rotations[[jj]])
+    xrots[[jj]] = rad2deg(atan2(-cdsign*cds[2], cds[1]))
+    yrots[[jj]] = rad2deg(atan2(cdsign*cds[3], cds[4]))
+    
+    #offsets[[jj]] = c(dfCat[[glue('x_exp{jj}')]][idx]%%1 - dfCat[['x_exp1']][idx]%%1, dfCat[[glue('y_exp{jj}')]][idx]%%1 - dfCat[['y_exp1']][idx]%%1, yrots[[jj]] - yrot1)
+    offsets[[jj]] = c(srcLocList[[jj]][1]%%1 - srcLocList[[1]][1]%%1, srcLocList[[jj]][2]%%1 - srcLocList[[1]][2]%%1, yrots[[jj]] - yrot1)
   }
   
-  dataList = profuseMultiImageFound2Fit(image_list = imgCutList, psf_list = psfList, segim_list = segimList, mask_list = maskList, offset_list = offsets,
+  ### Set up Found2Fit objects for each exposure
+  printf("INFO: Generating found2Fits objects for each exposure cutout.")
+  dataList = profuseMultiImageFound2Fit(image_list = lapply(imgCutList, `[[`, 'imDat'), psf_list = psfList, segim_list = segimList, mask_list = maskList, offset_list = offsets,
                                           SBdilate=2.5, reltol=1.5, ext=5,
-                                          magzero=magZP, gain = rep(ccdGain,numExps),
+                                          magzero=unlist(magzpList), gain = rep(ccdGain,numExps),
                                           Ncomp=modelOpts$n_comps,
                                           sing_nser_fit=modelOpts$sing_nser_fit,
                                           disk_nser_fit=modelOpts$disk_nser_fit,  disk_nser=modelOpts$disk_nser,
@@ -713,6 +739,8 @@ for (idx in seq(1,nrow(dfCat))){
     names(dataList)[names(dataList) == glue("image{jj}")] = expNameList[jj]
   }
   
+  profitLikeModel(dataList[[1]]$init,Data = dataList[[1]], makeplots = T, plotchisq = T)
+  
   printf("INFO: Running Highlander optimisation of model.")
   
   printf("Optim iters: {optimOpts$optim_iters}\nNiters: {optimOpts$Niters}\nNfinalMCMC: {optimOpts$NfinalMCMC}\n")
@@ -723,13 +751,13 @@ for (idx in seq(1,nrow(dfCat))){
   
   if (toPlot|toSave){
     if (toSave) {png(filename=glue('{plotDir}/{sourceName}/{sourceName}_single_multifit.png'), width=(numExps+1)*300, height=1800, pointsize=20)}
-    multiImageMakePlots(datalist=dataList, imagestack=imgCutStack, segim=seg$segim, parm=highFit$parm,
+    multiImageMakePlots(datalist=dataList, imagestack=imgCutStack, segim=seg$segim, parm=highFit$parm, magzps = magzpList,
                         plottext=glue("UID:\n{sourceName}\n\n # Exposures: {dataList$Nim}\n log(Mstar): {format(round(log10(dfCat[['StellarMass']][idx]), 2), nsmall = 2)}\n z: {format(round(dfCat[['zBest']][ii], 3), nsmall = 2)}"))
     
     if (toSave){dev.off()}
   }
   
-  profitLikeModel(highFit$parm,Data = dataList$j8pu3cijq, makeplots = T)
+  
   
   remakeModel = profitRemakeModellist(parm = highFit$parm, Data = dataList[[1]])
   optimModellist = remakeModel$modellist
