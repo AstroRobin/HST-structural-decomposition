@@ -43,7 +43,7 @@ parser$add_argument("-n","--name",
 args = parser$parse_args()
 
 #args = list(inputcat = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Catalogues/Subcats/Pilot/DEVILS_HST_pilot_subcat_0.csv', model = 'single', computer = 'local', name = 'test')
-args$inputcat = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Catalogues/Subcats/DEVILS_HST-ACS_exposure_positions_rotations.csv'
+#args$inputcat = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Catalogues/Subcats/DEVILS_HST-ACS_exposure_positions_rotations.csv'
 
 if (is.null(args$computer)){
   nCores = 24#strtoi(Sys.getenv('SLURM_CPUS_PER_TASK', unset=1))
@@ -76,7 +76,7 @@ library(assertthat)
 
 evalglobal = TRUE # Set global evaluate
 options(stringsAsFactors=FALSE) # adjust string problems
-#options(scipen=999) # suppress scientific notation
+options(scipen=999) # suppress scientific notation
 
 ###############################
 ### Define Useful Functions ###
@@ -192,7 +192,7 @@ profitImageScale = function(z, zlim, col = heat.colors(12),
   if(add.axis) {axis(axis.pos, padj=axis.padj, tck=axis.tck)}
 }
 
-multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magzps,
+multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magzps, offsets,
                                whichcomponents=list(sersic="all",moffat="all",ferrer="all",pointsource="all"),
                                cmap = rev(colorRampPalette(brewer.pal(9,'RdYlBu'))(100)),
                                errcmap = rev(c("#B00000",colorRampPalette(brewer.pal(9,'RdYlBu'))(100)[2:99],"#0000B0")),
@@ -219,10 +219,16 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magz
   } else {
     profound = profoundProFound(image=imagestack, segim=segim)
     targetIdx = profound$segim[dim(imagestack)[1]%/%2,dim(imagestack)[2]%/%2]
-    print(targetIdx)
     imageCut = magcutout(image=imagestack, loc=c(profound$segstats$xcen[[targetIdx]],profound$segstats$ycen[[targetIdx]]), box=rep(profound$segstats$R90[[targetIdx]]*5,2))$image
     segimCut = magcutout(image=segim, loc=c(profound$segstats$xcen[[targetIdx]],profound$segstats$ycen[[targetIdx]]), box=rep(profound$segstats$R90[[targetIdx]]*5,2))$image
     profoundSegimPlot(image=imageCut, segim=segimCut)
+  }
+  
+  if (missing(offsets)){
+    offsets = list()
+    for (ii in seq(datalist$Nim)){
+      offsets[[ii]] = datalist[[ii]]$offset
+    }
   }
   
   for (ii in seq(1,datalist$Nim)){ # loop over all exposures
@@ -230,11 +236,10 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magz
     region = datalist[[ii]]$region
     sigma = datalist[[ii]]$sigma
     magZP = magzps[[ii]] #datalist[[ii]]$magzero
-    print(magZP)
+    #print(magZP)
     
-    fitModellist = profitRemakeModellist(parm = parm, Data = datalist[[ii]], offset = datalist[[ii]]$offset)$modellist
-    print(fitModellist)
-    modelimage = profitMakeModel(modellist = fitModellist,
+    fitModellist = profitRemakeModellist(parm = parm, Data = datalist[[ii]], offset = offsets[[ii]])$modellist
+    modelimage = profitMakeModel(modellist = fitModellist, 
                                  magzero = magZP, psf = datalist[[ii]]$psf, dim = dim(image),
                                  psfdim = dim(datalist[[ii]]$psf), whichcomponents = whichcomponents)$z
     
@@ -329,9 +334,9 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magz
     dxbin = 10^x[2:length(x)]-10^x[1:(length(x)-1)]
     y = hist(error,breaks=c(xr[1]-dx,x,xr[2]+dx), plot=FALSE)$count[2:length(x)]
     y = y/sum(y)/dxbin
-    ylim = c(min(y[y>0]),10)
-    y[y<=0] = ylim[1]-1
-    magplot(x[1:(length(x)-1)]+dx, y, xlim=xlims,ylim=ylim, xlab="",ylab="", xaxs="i", type="s",log="y")
+    ylims = c(min(y[y>0]),10)
+    y[y<=0] = ylims[1]/10
+    magplot(x[1:(length(x)-1)]+dx, y, xlim=xlims, ylim=ylims, xlab="",ylab="", xaxs="i", type="s",log="y")
     xp=10^x
     lines(x, dchisq(xp,1), col="blue", xaxs="i")
     labs = c(bquote(chi^2),expression(chi^2*(1)))
@@ -362,6 +367,7 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magz
   }
   
 }
+
 
 
 ##############################
@@ -411,7 +417,7 @@ sizePSF = 5.0 # arcsec
 trimPSF = TRUE # whether to trim the TinyTim PSF to have pixel dimensions that match the size of sizePSF based on pixelScaleHST
 clobberPSF = F#TRUE # IF TRUE, always creates a new PSF using TinyTim; else a new PSF will only be created if one does not already exist.
 
-maxExps = 8 # The maximum number of exposures to use for a single fit
+maxExps = 16 # The maximum number of exposures to use for a single fit
 
 toPlot = FALSE#TRUE # Whether to show plots
 toSave = TRUE # Whether to save plots
@@ -558,17 +564,14 @@ for (idx in seq(1,nrow(dfCat))){
     
     # Load the image, data quality (dq) map and hdr objects
     imgFilename = glue("{framesDir}/{proposalID}/{obsetID}/{expName}_flt.fits")
-    printf("INFO: Loading exposure #{jj}: {imgFilename}")
+    printf("\n\nINFO: Loading exposure #{jj} on chip {expChip}: {imgFilename}")
     hdulist = Rfits_read_all(imgFilename, pointer=FALSE)
     
     img = hdulist[[sciIndex]] # this is an Rfits_image object
     dq = hdulist[[dqIndex]]
     
-    #hdr = hdulist[[sciIndex]]$hdr
-    #hdrRaw = hdulist[[sciIndex]]$raw
-    
     # Get source position info in exposure
-    srcLocList[[expName]] = Rwcs_s2p(RA=dfCat[['RAcen']][idx],Dec=dfCat[['DECcen']][idx], header = img$raw)
+    srcLocList[[expName]] = Rwcs_s2p(RA=dfCat[['RAcen']][idx], Dec=dfCat[['DECcen']][idx], header = img$raw)
     #expx = dfCat[[glue('x_exp{jj}')]][idx]
     #expy = dfCat[[glue('y_exp{jj}')]][idx]
     #srcLoc = c(expx, expy)
@@ -582,13 +585,9 @@ for (idx in seq(1,nrow(dfCat))){
     # Now get cutouts and WCS-adjusted headers
     ### TODO: change this to Rwcs_cutout. Does that exist? Yes, but it's hidden in the indexing code of Rfits_image
     printf("INFO: Source location in {expName}: {srcLocList[[jj]][1]}, {srcLocList[[jj]][2]}")
-    #wcsCutout = magcutoutWCS(img, header=hdr, loc=srcLocList[[jj]], loc.type='image', box=cutoutBox, plot=FALSE, )
-    imgCutList[[expName]] = img[srcLocList[[jj]][1], srcLocList[[jj]][2], box=cutoutBox] #wcsCutout$image
+    imgCutList[[expName]] = img[srcLocList[[jj]][1], srcLocList[[jj]][2], box=cutoutBox]
     hdrCutList[[expName]] = imgCutList[[expName]]$hdr
     
-    #magimage(imgCutList[[jj]]$imDat)
-    
-    #dqCutList[[expName]] = magcutout(dq, loc=srcLocList[[jj]], box=cutoutBox, plot=FALSE)$image
     dqCutList[[expName]] = dq[srcLocList[[jj]][1], srcLocList[[jj]][2], box=cutoutBox] # magcutout(dq, loc=srcLocList[[jj]], box=cutoutBox, plot=FALSE)$image
     dqDilated = profoundMakeSegimDilate(segim=dqCutList[[expName]]$imDat,size=3,expand=seq(4096,8192)) # Expand the cosmic rays by a pixel either side (i.e. size=3)
     maskList[[expName]] = apply(apply(dqDilated$segim, c(1,2), mask_pixel), c(1,2), as.integer) # Convert the binary dq map to a list of 1s and 0s
@@ -599,10 +598,10 @@ for (idx in seq(1,nrow(dfCat))){
     
     # Warp images and dqs onto a common WCS.
     printf("INFO: Warping image and dq map to a common WCS")
-    imgWarpList[[expName]] = magwarp(image_in=imgCutList[[jj]]$imDat, header_in=hdrCutList[[jj]], header_out=hdrCutList[[1]])$image
-    maskWarpList[[expName]] = apply(round(magwarp(image_in=maskList[[jj]], header_in=hdrCutList[[jj]], header_out=hdrCutList[[1]], doscale=FALSE)$image, digits=0), c(1,2), as.integer)
-    skyList[[expName]] = magwarp(image_in=skyGrid$sky, header_in=hdrCutList[[jj]], header_out=hdrCutList[[1]])$image
-    skyRMSList[[expName]] = magwarp(image_in=skyGrid$skyRMS, header_in=hdrCutList[[jj]], header_out=hdrCutList[[1]])$image
+    imgWarpList[[expName]] = Rwcs_warp(image_in=imgCutList[[jj]], header_out = imgCutList[[1]]$raw)
+    skyList[[expName]] = Rwcs_warp(image_in=skyGrid$sky, header_in = imgCutList[[jj]]$raw, header_out = imgCutList[[1]]$raw)$imDat
+    skyRMSList[[expName]] = Rwcs_warp(image_in=skyGrid$skyRMS, header_in = imgCutList[[jj]]$raw, header_out = imgCutList[[1]]$raw)$imDat
+    maskWarpList[[expName]] = apply(round(Rwcs_warp(image_in=maskList[[jj]], header_in = imgCutList[[jj]]$raw, header_out = imgCutList[[1]]$raw)$imDat, digits=0), c(1,2), as.integer)
     
     # Load or create PSF
     psfFilename = glue('{psfsDir}/{sourceName}_{expName}_psf.fits')
@@ -612,7 +611,7 @@ for (idx in seq(1,nrow(dfCat))){
       #>> Rscript Generate_HST_PSFs.R [dir] [name] [chip] [x] [y] [focus=0.0] [size=10.0] [filter=f814w] [spectrum=13]
       print(glue("INFO: Running TinyTim with:\n>> Rscript {psfScriptPath} {psfsDir} {sourceName}_{expName} {expChip} {srcLocList[[jj]][1]} {srcLocList[[jj]][2]} 0.0 {sizePSF}"))
       invisible(
-        system(glue("Rscript {psfScriptPath} {psfsDir} {sourceName}_{expName} {expChip} {expx} {expy} 0.0 {sizePSF}"))
+        system(glue("Rscript {psfScriptPath} {psfsDir} {sourceName}_{expName} {expChip} {srcLocList[[jj]][1]} {srcLocList[[jj]][2]} 0.0 {sizePSF}"))
       )
     }
     
@@ -631,18 +630,16 @@ for (idx in seq(1,nrow(dfCat))){
     
   }
   
-  print("INFO: Exposure names:")
-  print(names(imgCutList))
+  printf("INFO: Exposure names:", end=' ')
+  cat(names(imgCutList), end='\n')
   printf("INFO: Length of images: {length(imgCutList)}")
   printf("INFO: Length of dq: {length(dqCutList)}")
   printf("INFO: Length of mask: {length(maskList)}")
   printf("INFO: Length of PSF: {length(psfList)}")
   
-  
   # Stack the images and masks
   printf("INFO: Creating median stack of {length(imgCutList)} cutout images.")
-  imgCutStack = profoundMakeStack(image_list=imgWarpList, sky_list=skyList, skyRMS_list=skyRMSList, mask_list=maskWarpList, magzero_in = unlist(magzpList), masking='&')$image
-  #imgCutStack = profoundMakeStack(image_list=imgCutList, sky_list=skyList, skyRMS_list=skyRMSList, mask_list=maskList, magzero_in = unlist(magzpList))$image # unwarped images
+  imgCutStack = profoundMakeStack(image_list=lapply(imgWarpList, `[[`, 'imDat'), sky_list=skyList, skyRMS_list=skyRMSList, mask_list=maskWarpList, magzero_in = unlist(magzpList), masking='&')$image
   
   maskStack = maskList[[1]]
   if (numExps > 1){
@@ -654,7 +651,7 @@ for (idx in seq(1,nrow(dfCat))){
   
   ### Run profoundProfound on the median stack of cutouts:
   printf("INFO: Creating segmentation map for median stacked image.")
-  seg = profoundProFound(image=imgCutStack, mask=maskStack, sigma=1.5, dilete=5, skycut=1.0, SBdilate=2.5, tol=5, reltol=0.25, ext=5, plot=T)#toPlot)
+  seg = profoundProFound(image=imgCutStack, mask=maskStack, sigma=1.5, dilete=5, skycut=1.0, SBdilate=2.5, tol=5, reltol=0.25, ext=5, plot=FALSE)
   
   if (toPlot|toSave){
     if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-segmentation_map.png"), width=650, height=650, pointsize=20)}
@@ -668,8 +665,8 @@ for (idx in seq(1,nrow(dfCat))){
   for (jj in seq(1,numExps)){
     expName = dfCat[[glue('name_exp{jj}')]][idx]
     
-    segimList[[expName]] = apply(magwarp(image_in=seg$segim, header_in=hdrCutList[[1]], header_out=hdrCutList[[jj]], doscale=FALSE, interpolation='nearest')$image, c(1,2), as.integer)
-    
+    segimList[[expName]] = apply(Rwcs_warp(image_in=seg$segim, header_in=imgCutList[[1]]$raw, header_out=imgCutList[[jj]]$raw, doscale=FALSE, interpolation='nearest')$imDat, c(1,2), as.integer)
+    segimList[[expName]][is.na(segimList[[expName]])] = 0
     if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-{expNameList[jj]}_sky_statistics.png"), width=720, height=720, pointsize=16)}
     if (toPlot|toSave){par(mfrow=c(2,2), mar = c(1,1,1,1))}
     skyList[[expName]] = profoundProFound(image=imgCutList[[jj]]$imDat, segim=segimList[[expName]], mask=maskList[[jj]],magzero = magzpList[[jj]], gain=ccdGain, plot=T,
@@ -688,13 +685,20 @@ for (idx in seq(1,nrow(dfCat))){
     if (numExps <= 4){
       if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-cutouts.png"), width=900, height=900, pointsize=10)}
       par(mfrow=c(2,2), mar = c(1.5,1.5,1.5,1.5), oma = c(0.25,0.25,0.25,0.25))
-    } else {
+    } else if (numExps > 4 & numExps <= 8) {
       if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-cutouts.png"), width=1800, height=900, pointsize=10)}
       par(mfrow=c(2,4), mar = c(1.5,1.5,1.5,1.5), oma = c(0.25,0.25,0.25,0.25))
+    } else if (numExps > 8 & numExps <= 12){
+      if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-cutouts.png"), width=1800, height=900+450, pointsize=10)}
+      par(mfrow=c(3,4), mar = c(1.5,1.5,1.5,1.5), oma = c(0.25,0.25,0.25,0.25))
+    } else {
+      if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-cutouts.png"), width=1800, height=1800, pointsize=10)}
+      par(mfrow=c(4,4), mar = c(1.5,1.5,1.5,1.5), oma = c(0.25,0.25,0.25,0.25))
     }
+    
     for (jj in seq(1,numExps)){
       profoundSegimPlot(image=imgCutList[[jj]]$imDat, segim=segimList[[jj]], mask=maskList[[jj]], bad=NA)
-      text(0.1*cutoutBox[1],0.925*cutoutBox[2],expNameList[jj], adj=0, col='red', cex=1.6)
+      text(0.1*cutoutBox[1],0.925*cutoutBox[2],expNameList[jj], adj=0, col='white', cex=1.5*(0.5 + 0.75 * numExps%/%4))
     }
     if (toSave){dev.off()}
   }
@@ -710,17 +714,20 @@ for (idx in seq(1,nrow(dfCat))){
   
   xrot1 = rad2deg(atan2(-cdsign*cds[2], cds[1]))
   yrot1 = rad2deg(atan2(cdsign*cds[3], cds[4]))
-  for (jj in seq(1,numExps)){ 
+  for (jj in seq(1,numExps)){
     cds = from_header(hdrCutList[[jj]], keys = c('CD1_1','CD2_1','CD1_2','CD2_2'), as=as.numeric)
     cdsign = sign(det(matrix(cds, ncol=2))) # Get the sign of the determinant for the CD matrix
-    
     xrots[[jj]] = rad2deg(atan2(-cdsign*cds[2], cds[1]))
     yrots[[jj]] = rad2deg(atan2(cdsign*cds[3], cds[4]))
+    
+    # Run profound
+    segStats = profoundSegimStats(image=imgCutList[[jj]]$imDat, segim=segimList[[jj]], magzero=magzpList[[jj]], pixscale=pixScaleHST)
     
     #offsets[[jj]] = c(dfCat[[glue('x_exp{jj}')]][idx]%%1 - dfCat[['x_exp1']][idx]%%1, dfCat[[glue('y_exp{jj}')]][idx]%%1 - dfCat[['y_exp1']][idx]%%1, yrots[[jj]] - yrot1)
     offsets[[jj]] = c(srcLocList[[jj]][1]%%1 - srcLocList[[1]][1]%%1, srcLocList[[jj]][2]%%1 - srcLocList[[1]][2]%%1, yrots[[jj]] - yrot1)
   }
   
+
   ### Set up Found2Fit objects for each exposure
   printf("INFO: Generating found2Fits objects for each exposure cutout.")
   dataList = profuseMultiImageFound2Fit(image_list = lapply(imgCutList, `[[`, 'imDat'), psf_list = psfList, segim_list = segimList, mask_list = maskList, offset_list = offsets,
@@ -731,7 +738,7 @@ for (idx in seq(1,nrow(dfCat))){
                                           disk_nser_fit=modelOpts$disk_nser_fit,  disk_nser=modelOpts$disk_nser,
                                           bulge_nser_fit=modelOpts$bulge_nser_fit, bulge_nser=modelOpts$bulge_nser, bulge_circ=modelOpts$bulge_circ,
                                           pos_delta = 10, # does this pos_delta value work for the biggest galaxies?
-                                          rough=roughFit, tightcrop = TRUE, deblend_extra=FALSE, fit_extra=FALSE, plot=toPlot)
+                                          rough=roughFit, tightcrop = FALSE, deblend_extra=FALSE, fit_extra=FALSE, plot=toPlot)
   
   
   # Can I actually do this? - yes!
@@ -739,10 +746,10 @@ for (idx in seq(1,nrow(dfCat))){
     names(dataList)[names(dataList) == glue("image{jj}")] = expNameList[jj]
   }
   
-  profitLikeModel(dataList[[1]]$init,Data = dataList[[1]], makeplots = T, plotchisq = T)
+  
+  #profitLikeModel(dataList[[1]]$init,Data = dataList[[1]], makeplots = T, plotchisq = T)
   
   printf("INFO: Running Highlander optimisation of model.")
-  
   printf("Optim iters: {optimOpts$optim_iters}\nNiters: {optimOpts$Niters}\nNfinalMCMC: {optimOpts$NfinalMCMC}\n")
   # Change to profuseMultiImageDoFit(, ...)
   highFit = profuseMultiImageDoFit(image_list = imgCutList, dataList, ablim=1,
@@ -750,13 +757,14 @@ for (idx in seq(1,nrow(dfCat))){
                                    CMAargs = optimOpts$CMA, LDargs = optimOpts$LD)
   
   if (toPlot|toSave){
-    if (toSave) {png(filename=glue('{plotDir}/{sourceName}/{sourceName}_single_multifit.png'), width=(numExps+1)*300, height=1800, pointsize=20)}
-    multiImageMakePlots(datalist=dataList, imagestack=imgCutStack, segim=seg$segim, parm=highFit$parm, magzps = magzpList,
-                        plottext=glue("UID:\n{sourceName}\n\n # Exposures: {dataList$Nim}\n log(Mstar): {format(round(log10(dfCat[['StellarMass']][idx]), 2), nsmall = 2)}\n z: {format(round(dfCat[['zBest']][ii], 3), nsmall = 2)}"))
+    if (toSave) {png(filename=glue('{plotDir}/{sourceName}/{sourceName}_{modelName}_multifit-offset0.75.png'), width=(numExps+1)*300, height=1800, pointsize=20)}
+     multiImageMakePlots(datalist=dataList, imagestack=imgCutStack, segim=seg$segim, parm=highFit$parm, magzps = magzpList,
+                         plottext=glue("UID:\n{sourceName}\n\n # Exposures: {dataList$Nim}\n log(Mstar): {format(round(log10(dfCat[['StellarMass']][idx]), 2), nsmall = 2)}\n z: {format(round(dfCat[['zBest']][ii], 3), nsmall = 2)}"))
+    #if (toSave) {png(filename=glue('{plotDir}/{result$sourceName}/{result$sourceName}_{result$modelName}_multifit0.png'), width=(length(result$expNames)+1)*300, height=1800, pointsize=20)}
+    #multiImageMakePlots(datalist=result$dataList, imagestack=result$imgStack, segim=result$segimList[[1]], parm=result$highFit$parm, offset=offsets0, magzps = magzpList)
     
     if (toSave){dev.off()}
   }
-  
   
   
   remakeModel = profitRemakeModellist(parm = highFit$parm, Data = dataList[[1]])
@@ -773,16 +781,19 @@ for (idx in seq(1,nrow(dfCat))){
   printf("INFO: Creating segmentation map for median stacked image.")
   outputs = list(args=args,
                  idx=idx,
-                 sourceName=sourceName,
+                 row=dfCat[idx,],
                  modelName=modelName,
                  modelOptions=modelOpts,
                  optimOptions=optimOpts,
                  cutoutBox=cutoutBox,
                  skyBoxDims=skyBoxDims,
-                 dqList=dqCutList,
+                 magzpList=magzpList,
+                 sourceName=sourceName,
+                 numimgs=length(expNameList),
                  expNames=expNameList,
                  imgList=imgCutList,
                  imgStack=imgCutStack,
+                 dqList=dqCutList,
                  skyList=skyList,
                  hdrList=hdrCutList,
                  maskList=maskList,
@@ -808,7 +819,54 @@ for (idx in seq(1,nrow(dfCat))){
 } # end main galaxy for loop
 
 
+magzpList = list()
 
+for (ii in seq_along(result$hdrList)){
+  obsetID = paste0( substr(toupper(result$expNames[[ii]]), 1, 6), '010' )
+  
+  # Establish which proposal ID this exposure came from.
+  if (substr(result$expNames[[ii]],1,3) == 'j8p'){
+    proposalID = 'PID09822'
+  } else if (substr(result$expNames[[ii]],1,3) == 'j8x'){
+    proposalID = 'PID10092'
+  } else if (substr(result$expNames[[ii]],1,3) == 'jco'){
+    proposalID = 'PID13641'
+  } else if (substr(result$expNames[[ii]],1,3) == 'jbo'){
+    proposalID = 'PID12440'
+  } else if (substr(result$expNames[[ii]],1,3) == 'jbh'){
+    proposalID = 'PID12328'
+  } else {
+    printf("WARNING: No proposal ID could be found for exposure {result$expNames[[ii]]}.")
+  }
+  
+  imgFilename = glue("{framesDir}/{proposalID}/{obsetID}/{result$expNames[[ii]]}_flt.fits")
+  hdulist = Rfits_read_all(imgFilename, pointer=FALSE)
+  
+  fluxlambda = from_header(hdr = result$imgList[[ii]]$hdr, keys = 'PHOTFLAM', as=as.numeric)
+  pivotlambda = from_header(hdr = result$imgList[[ii]]$hdr, keys = 'PHOTPLAM', as=as.numeric)
+  expTime = from_header(hdr = hdulist[[1]]$hdr, keys = 'EXPTIME', as=as.numeric) # exposure time from first extension header
+  magzpList[[ii]] = -2.5*log10(fluxlambda/expTime) - 5*log10(pivotlambda) - 2.408 # instrumental zeropoint magnitudes in AB mags (from https://www.stsci.edu/hst/instrumentation/acs/data-analysis/zeropoints)
+}
+
+offsets0 = list()
+for (ii in seq(length(result$expNames))){
+  offsets0[[ii]] = result$dataList[[ii]]$offset
+  #offsets0[[ii]][1] = offsets0[[ii]][1] + result$offsets[[ii]][1]
+  #offsets0[[ii]][2] = offsets0[[ii]][2] + result$offsets[[ii]][2]
+}
+
+delta=0.75
+offsets0[[2]] = shift(offsets0[[2]], delta=delta, down=T)
+offsets0[[3]] = shift(offsets0[[3]], delta=delta, down=T, right=T)
+offsets0[[4]] = shift(offsets0[[4]], delta=delta, right=T)
+offsets0[[5]] = shift(offsets0[[5]], delta=delta, down=T, right=T)
+offsets0[[6]] = shift(offsets0[[6]], delta=delta, right=T)
+offsets0[[7]] = shift(offsets0[[7]], delta=delta, down=T)
+offsets0[[8]] = shift(offsets0[[8]], delta=delta, down=T, right=T)
+offsets0[[9]] = shift(offsets0[[9]], delta=delta, down=T, right=T)
+offsets0[[10]] = shift(offsets0[[10]], delta=delta, down=T, right=T)
+offsets0[[11]] = shift(offsets0[[11]], delta=delta, right=T)
+offsets0[[12]] = shift(offsets0[[12]], delta=delta, down=T, right=T)
 
 ### Run in RStudio afterwards ###
 #result = readRDS('/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/ProFuse_Outputs/101505979732574752/101505979732574752_deV-exp_output.rds')
@@ -844,10 +902,6 @@ for (idx in seq(1,nrow(dfCat))){
 ### Run Highlander Optimisation ###
 # initiate Highlander Fit with 2 iterations each of CMA and LaplacesDemon.
 # Complete MCMC optimisation with a longer MCMC run to get sufficient posteriors for parameters.
-
-
-
-
 
 ### OLD CODE ###
 ## The old way of running Highlander
