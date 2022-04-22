@@ -374,17 +374,19 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magz
 ### Define some parameters ###
 ##############################
 
+# Define filepaths
 if (args$computer == 'local'){
-  baseDir = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA'
+  baseDir = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA' # Base directory
   
-  framesDir = glue('/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/Frames')
+  framesDir = glue('/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/Frames') # Where the frame FITS files are kept
   psfScriptPath = glue('{baseDir}/Programs/HST-structural-decomposition/Generate_HST_PSFs.R') # If no PSF exists, make one using this script
-  psfsDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/PSFs'
+  psfsDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/PSFs' # Where to load/save PSFs
+  focusFilename = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/PSFs/HST-ACS_focus_lookup_RJM.csv' # The focus measurements table for HST PSFs
   
-  resultsDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/ProFuse_Outputs'
-  plotDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/Plots'
+  resultsDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/ProFuse_Outputs' # ProFuse outputs saved here
+  plotDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/Plots' # Plots saved here
   
-  badIDFilename = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/Logs/Bad_IDs_single_test.txt'
+  badIDFilename = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/Logs/Failed_IDs_{args$model}_{args$name}_{Sys.Date()}.txt' # Which galaxies failed
   
 } else if (args$computer == 'magnus'){
   baseDir = '/group/pawsey0160/rhwcook/HST_Structural_Decomposition'
@@ -392,6 +394,7 @@ if (args$computer == 'local'){
   framesDir = glue('{baseDir}/Data/Frames')
   psfsDir = glue('{baseDir}/Data/PSFs')
   psfScriptPath = glue('{baseDir}/Generate_HST_PSFs.R') # If no PSF exists, make one using this script
+  focusFilename = '{baseDir}/Data/HST-ACS_focus_lookup_RJM.csv'
   
   resultsDir = glue('{baseDir}/Results/ProFuse_Outputs')
   plotDir = glue('{baseDir}/Results/Plots')
@@ -400,6 +403,7 @@ if (args$computer == 'local'){
 }
 
 printf("LibPaths: {.libPaths()}")
+
 
 # Set up some parallel code
 registerDoParallel(cores=nCores)
@@ -414,8 +418,9 @@ ccdGain = 1 #from_header(hdrCutList[[jj]], 'CCDGAIN', to=as.numeric) # This is i
 pixScaleHST = 0.05 # The pixel scale of HST ACS non-rotated and raw .flt exposure frames.
 
 sizePSF = 5.0 # arcsec
+refocusPSF = TRUE # whether the PSF should be refocused using the HST focus measurements from R. J. Massey
 trimPSF = TRUE # whether to trim the TinyTim PSF to have pixel dimensions that match the size of sizePSF based on pixelScaleHST
-clobberPSF = F#TRUE # IF TRUE, always creates a new PSF using TinyTim; else a new PSF will only be created if one does not already exist.
+clobberPSF = TRUE # IF TRUE, always creates a new PSF using TinyTim; else a new PSF will only be created if one does not already exist.
 
 maxExps = 16 # The maximum number of exposures to use for a single fit
 
@@ -580,6 +585,7 @@ for (idx in seq(1,nrow(dfCat))){
     fluxlambda = from_header(hdr = img$hdr, keys = 'PHOTFLAM', as=as.numeric)
     pivotlambda = from_header(hdr = img$hdr, keys = 'PHOTPLAM', as=as.numeric)
     expTime = from_header(hdr = hdulist[[1]]$hdr, keys = 'EXPTIME', as=as.numeric) # exposure time from first extension header
+    expStart = from_header(hdr = hdulist[[1]]$hdr, keys = 'EXPSTART', as=as.numeric) # exposure start date (MJD) from first extension header
     magzpList[[jj]] = -2.5*log10(fluxlambda/expTime) - 5*log10(pivotlambda) - 2.408 # instrumental zeropoint magnitudes in AB mags (from https://www.stsci.edu/hst/instrumentation/acs/data-analysis/zeropoints)
     
     # Now get cutouts and WCS-adjusted headers
@@ -603,15 +609,26 @@ for (idx in seq(1,nrow(dfCat))){
     skyRMSList[[expName]] = Rwcs_warp(image_in=skyGrid$skyRMS, header_in = imgCutList[[jj]]$raw, header_out = imgCutList[[1]]$raw)$imDat
     maskWarpList[[expName]] = apply(round(Rwcs_warp(image_in=maskList[[jj]], header_in = imgCutList[[jj]]$raw, header_out = imgCutList[[1]]$raw)$imDat, digits=0), c(1,2), as.integer)
     
-    # Load or create PSF
+    # Load or Generate PSF
     psfFilename = glue('{psfsDir}/{sourceName}_{expName}_psf.fits')
     if (!file.exists(psfFilename) | clobberPSF==TRUE){
       printf("INFO: Creating new PSF, saving to file '{psfFilename}'.")
+      focus = 0.0
+      if (refocusPSF){
+        dfFocii = read.csv(focusFilename)
+        sel = which.min(abs(expStart-dfFocii$MJD))
+        if (abs(expStart - dfFocii$MJD[sel]) <= 0.125){ # Focus measurement must be within a MJD diff of 0.125 = 3 hours (i.e. ~2 HST orbits)
+          focus = dfFocii$Focus[sel]
+          printf("INFO: Refocusing PSF by {focus} micrometers")
+        } else {
+          printf("WARNING: Could not refocus PSF, closest focus measurement was {expStart - dfFocii$MJD[sel]} days from observation")
+        }
+      }
       
       #>> Rscript Generate_HST_PSFs.R [dir] [name] [chip] [x] [y] [focus=0.0] [size=10.0] [filter=f814w] [spectrum=13]
-      print(glue("INFO: Running TinyTim with:\n>> Rscript {psfScriptPath} {psfsDir} {sourceName}_{expName} {expChip} {srcLocList[[jj]][1]} {srcLocList[[jj]][2]} 0.0 {sizePSF}"))
+      print(glue("INFO: Running TinyTim with:\n>> Rscript {psfScriptPath} {psfsDir} {sourceName}_{expName} {expChip} {srcLocList[[jj]][1]} {srcLocList[[jj]][2]} {focus} {sizePSF}"))
       invisible(
-        system(glue("Rscript {psfScriptPath} {psfsDir} {sourceName}_{expName} {expChip} {srcLocList[[jj]][1]} {srcLocList[[jj]][2]} 0.0 {sizePSF}"))
+        system(glue("Rscript {psfScriptPath} {psfsDir} {sourceName}_{expName} {expChip} {srcLocList[[jj]][1]} {srcLocList[[jj]][2]} {focus} {sizePSF}"))
       )
     }
     
@@ -848,25 +865,6 @@ for (ii in seq_along(result$hdrList)){
   magzpList[[ii]] = -2.5*log10(fluxlambda/expTime) - 5*log10(pivotlambda) - 2.408 # instrumental zeropoint magnitudes in AB mags (from https://www.stsci.edu/hst/instrumentation/acs/data-analysis/zeropoints)
 }
 
-offsets0 = list()
-for (ii in seq(length(result$expNames))){
-  offsets0[[ii]] = result$dataList[[ii]]$offset
-  #offsets0[[ii]][1] = offsets0[[ii]][1] + result$offsets[[ii]][1]
-  #offsets0[[ii]][2] = offsets0[[ii]][2] + result$offsets[[ii]][2]
-}
-
-delta=0.75
-offsets0[[2]] = shift(offsets0[[2]], delta=delta, down=T)
-offsets0[[3]] = shift(offsets0[[3]], delta=delta, down=T, right=T)
-offsets0[[4]] = shift(offsets0[[4]], delta=delta, right=T)
-offsets0[[5]] = shift(offsets0[[5]], delta=delta, down=T, right=T)
-offsets0[[6]] = shift(offsets0[[6]], delta=delta, right=T)
-offsets0[[7]] = shift(offsets0[[7]], delta=delta, down=T)
-offsets0[[8]] = shift(offsets0[[8]], delta=delta, down=T, right=T)
-offsets0[[9]] = shift(offsets0[[9]], delta=delta, down=T, right=T)
-offsets0[[10]] = shift(offsets0[[10]], delta=delta, down=T, right=T)
-offsets0[[11]] = shift(offsets0[[11]], delta=delta, right=T)
-offsets0[[12]] = shift(offsets0[[12]], delta=delta, down=T, right=T)
 
 ### Run in RStudio afterwards ###
 #result = readRDS('/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/ProFuse_Outputs/101505979732574752/101505979732574752_deV-exp_output.rds')

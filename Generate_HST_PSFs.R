@@ -4,10 +4,9 @@
 # Author: R. H. W. Cook
 # Date: 25/01/2022
 
-# To-Do: 
-#   * Add get_focus() function to obtain focus value from historical measurements.
 
 library(glue)
+library(Rfits)
 
 #.libPaths(c(libPath,.libPaths()))
 
@@ -20,7 +19,8 @@ TinyTimACSR = function(input_dir, name, chip, x, y, filter, spectrum=13, size=3.
   
   psf_runfile <- paste(input_dir,'/',name,'_run',sep='')
   fileConn <- file(psf_runfile)
-  writeLines(paste(tinyTimPath,"/tiny1 ",name,"_parameter_file ", "ebmv=",exBmV," << EOF",sep=''), fileConn)
+  #writeLines(paste(tinyTimPath,"/tiny1 ",name,".param ", "ebmv=",exBmV," << EOF",sep=''), fileConn)
+  writeLines(glue('{tinyTimPath}/tiny1 {name}.param ebmv={exBmV} << EOF'), fileConn)
   close(fileConn)
   
   cat(15 ,'\n',file=psf_runfile,append=TRUE)      # camera: 15 -> ACS - Wide Field Channel 
@@ -34,16 +34,29 @@ TinyTimACSR = function(input_dir, name, chip, x, y, filter, spectrum=13, size=3.
   cat(paste(name,'_image',sep='') ,'\n',file=psf_runfile,append=TRUE)
   cat("EOF" ,'\n',file=psf_runfile,append=TRUE)
   
-  
   invisible(capture.output(system(paste('source ',input_dir,'/',name,'_run',sep=''))))
   Sys.sleep(1)
-  invisible(capture.output(system(paste(tinyTimPath,'/tiny2 ',input_dir,'/',name,'_parameter_file',sep=''))))
-  Sys.sleep(5) # need to sleep so
-  invisible(capture.output(system(paste(tinyTimPath,'/tiny3 ',input_dir,'/',name,'_parameter_file',sep=''))))
+  
+  if (focus != 0){ ## Adjust focus if specified
+    fileConn = file(glue("{input_dir}/{name}.param"),open='r+')
+    parLines = readLines(fileConn)
+    focusLine = grep("*# Z4 = Focus for center of ACS/WFC field", parLines)
+    newFocus = as.numeric(strsplit(parLines[[focusLine]], '#')[[1]][1]) + focus
+    parLines[focusLine] = paste0(' ',format(newFocus, digits=4), '   # Z4 = Focus for center of ACS/WFC field')
+    writeLines(parLines, fileConn)
+    close(fileConn)
+    
+    Sys.sleep(1)
+  }
+  
+  
+  invisible(capture.output(system(paste(tinyTimPath,'/tiny2 ',input_dir,'/',name,'.param',sep=''))))
+  Sys.sleep(5)
+  invisible(capture.output(system(paste(tinyTimPath,'/tiny3 ',input_dir,'/',name,'.param',sep=''))))
   
   Sys.sleep(1)
   system(paste('rm ', input_dir, '/', name, '_image00_psf.fits',sep= '')) 
-  system(paste('rm ', input_dir, '/', name, '_parameter_file',sep= ''))
+  system(paste('rm ', input_dir, '/', name, '.param',sep= ''))
   system(paste('rm ', input_dir, '/', name, '_image.tt3',sep= ''))
   system(paste('rm ', input_dir, '/', name, '_run',sep= ''))
   
@@ -84,13 +97,11 @@ if (length(args) < 5) { # get command line args
   y = as.integer(args[5]) # y position
   if (is.na(x) | is.na(y)){ stop(glue("x/y must be able to be coerced into integer, but instead received {args[4]}, {args[5]}.")) }
   
-  if (is.na(args[6]) | args[6]=='NA') {  # focus
+  if (is.na(args[6]) | args[6]=='NA') {  # focus given in micron
     focus = 0.0
-  } else if (args[6] == 'auto'){
-    focus = 0.0#get_focus()
   } else {
-    focus = as.numeric(args[6])
-    if (is.na(focus)) {stop(glue("focus must either be 'auto' or able to be coerced into float, but instead received {args[6]}."))}
+    focus = as.numeric(args[6]) * 0.011 # multiplied by 0.011 to convert from micron to number of wavelengths @ 547 nm
+    if (is.na(focus)) {stop(glue("focus must be able to be coerced into float, but instead received {args[6]}."))}
   }
   
   size = ifelse(is.na(args[7]) | args[7]=='NA', 10, as.numeric(args[7])) # Output PSF size
