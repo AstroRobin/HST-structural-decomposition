@@ -499,6 +499,15 @@ optimOpts$LD = list(control=list(abstol=0.1), Iterations = optimOpts$Niters[2], 
 printf("INFO: Loading source catalogue")
 dfCat = read.csv(args$inputcat) # read in the catalogue
 
+if (refocusPSF){ # load the PSF focuses file (if available)
+  if (file.exists(focusFilename)){
+    dfFocii = read.csv(focusFilename)
+  } else {
+    printf("WARNING: File does not exist '{focusFilename}'")
+    refocusPSF = FALSE
+  }
+}
+
 #foreach(idx=1:nrow(dfCat))%do%{ #for (idx in foundSources){
 for (idx in seq(1,nrow(dfCat))){
   check=try({ # Catch any failed runs
@@ -508,19 +517,19 @@ for (idx in seq(1,nrow(dfCat))){
   printf("\n\n##################################################################################")
   printf("## INFO: Running structural decomposition on {sourceName} ({idx}/{nrow(dfCat)}) ##")
   printf("##################################################################################")
+
+  numExps = min(c(dfCat$num_exps[idx], maxExps))
+  if (numExps == 0){
+    printf("INFO: No frames found for source: {sourceName}")
+    write(sourceName,file=badIDFilename,append=TRUE)
+    next
+  }
+  cat(glue("INFO: {dfCat$num_exps[idx]} exposures found (using {numExps}): \n\n"))
   
   # Create output plot file if it does not already exist
   if (!file.exists(glue("{plotDir}/{sourceName}"))){
     printf("INFO: Output directory did not exist, creating now.")
     dir.create(glue("{plotDir}/{sourceName}"))
-  }
-  
-  numExps = min(c(dfCat$num_exps[idx], maxExps))
-  cat(glue("INFO: {dfCat$num_exps[idx]} exposures found (using {numExps}): \n\n"))
-  if (numExps == 0){
-    printf("INFO: No frames found for source: {sourceName}")
-    write(sourceName,file=badIDFilename,append=TRUE)
-    next
   }
   
   ### Load each exposure's image & DQ map from the observation set
@@ -577,9 +586,6 @@ for (idx in seq(1,nrow(dfCat))){
     
     # Get source position info in exposure
     srcLocList[[expName]] = Rwcs_s2p(RA=dfCat[['RAcen']][idx], Dec=dfCat[['DECcen']][idx], header = img$raw)
-    #expx = dfCat[[glue('x_exp{jj}')]][idx]
-    #expy = dfCat[[glue('y_exp{jj}')]][idx]
-    #srcLoc = c(expx, expy)
     
     # Calculate magnitude zeropoint
     fluxlambda = from_header(hdr = img$hdr, keys = 'PHOTFLAM', as=as.numeric)
@@ -589,7 +595,6 @@ for (idx in seq(1,nrow(dfCat))){
     magzpList[[jj]] = -2.5*log10(fluxlambda/expTime) - 5*log10(pivotlambda) - 2.408 # instrumental zeropoint magnitudes in AB mags (from https://www.stsci.edu/hst/instrumentation/acs/data-analysis/zeropoints)
     
     # Now get cutouts and WCS-adjusted headers
-    ### TODO: change this to Rwcs_cutout. Does that exist? Yes, but it's hidden in the indexing code of Rfits_image
     printf("INFO: Source location in {expName}: {srcLocList[[jj]][1]}, {srcLocList[[jj]][2]}")
     imgCutList[[expName]] = img[srcLocList[[jj]][1], srcLocList[[jj]][2], box=cutoutBox]
     hdrCutList[[expName]] = imgCutList[[expName]]$hdr
@@ -615,13 +620,12 @@ for (idx in seq(1,nrow(dfCat))){
       printf("INFO: Creating new PSF, saving to file '{psfFilename}'.")
       focus = 0.0
       if (refocusPSF){
-        dfFocii = read.csv(focusFilename)
         sel = which.min(abs(expStart-dfFocii$MJD))
         if (abs(expStart - dfFocii$MJD[sel]) <= 0.125){ # Focus measurement must be within a MJD diff of 0.125 = 3 hours (i.e. ~2 HST orbits)
           focus = dfFocii$Focus[sel]
-          printf("INFO: Refocusing PSF by {focus} micrometers")
+          printf("INFO: Refocusing PSF by {focus} micrometers.")
         } else {
-          printf("WARNING: Could not refocus PSF, closest focus measurement was {expStart - dfFocii$MJD[sel]} days from observation")
+          printf("WARNING: Could not refocus PSF, closest focus measurement was {expStart - dfFocii$MJD[sel]} days from observation.")
         }
       }
       
@@ -632,7 +636,7 @@ for (idx in seq(1,nrow(dfCat))){
       )
     }
     
-    psf = Rfits_read_image(psfFilename,ext=1)$imDat
+    psf = Rfits_read_image(psfFilename,ext=1)$imDat # read in the PSF file
     
     if (trimPSF == TRUE){ # Trim the PSF?
       printf("INFO: Trimming PSF")
@@ -723,8 +727,8 @@ for (idx in seq(1,nrow(dfCat))){
   ### Calculate offsets and rotations between frames
   printf("INFO: Calculating offsets/rotations between exposures.")
   offsets = list() # The offsets are just the sub-pixel offsets between positions as the cutouts are already centered on the pixel positions.
-  xrots = list()
-  yrots = list()
+  xrots = list() # rotations from the x-axis
+  yrots = list() # rotations from the y-axis (!= xrots + 90, because HST images have skew)
   
   cds = from_header(hdrCutList[[1]], keys = c('CD1_1','CD2_1','CD1_2','CD2_2'), as=as.numeric)
   cdsign = sign(det(matrix(cds, ncol=2))) # Get the sign of the determinant for the CD matrix
@@ -738,7 +742,7 @@ for (idx in seq(1,nrow(dfCat))){
     yrots[[jj]] = rad2deg(atan2(cdsign*cds[3], cds[4]))
     
     # Run profound
-    segStats = profoundSegimStats(image=imgCutList[[jj]]$imDat, segim=segimList[[jj]], magzero=magzpList[[jj]], pixscale=pixScaleHST)
+    #segStats = profoundSegimStats(image=imgCutList[[jj]]$imDat, segim=segimList[[jj]], magzero=magzpList[[jj]], pixscale=pixScaleHST)
     
     #offsets[[jj]] = c(dfCat[[glue('x_exp{jj}')]][idx]%%1 - dfCat[['x_exp1']][idx]%%1, dfCat[[glue('y_exp{jj}')]][idx]%%1 - dfCat[['y_exp1']][idx]%%1, yrots[[jj]] - yrot1)
     offsets[[jj]] = c(srcLocList[[jj]][1]%%1 - srcLocList[[1]][1]%%1, srcLocList[[jj]][2]%%1 - srcLocList[[1]][2]%%1, yrots[[jj]] - yrot1)
@@ -762,7 +766,6 @@ for (idx in seq(1,nrow(dfCat))){
   for (jj in seq(1, numExps)){
     names(dataList)[names(dataList) == glue("image{jj}")] = expNameList[jj]
   }
-  
   
   #profitLikeModel(dataList[[1]]$init,Data = dataList[[1]], makeplots = T, plotchisq = T)
   
