@@ -413,6 +413,9 @@ if (! file.exists(args$inputcat)){
   stop(glue("ERROR: The input catalogue '{args$inputcat}' does not exist."))
 }
 
+
+pids = c('PID09822', 'PID10092', 'PID12440')
+
 #magZP = 35.796 #from_header(hdrCutList[[jj]], 'PHOTZPT', to=as.numeric) 
 pixScaleHST = 0.05 # The pixel scale of HST ACS non-rotated and raw .flt exposure frames.
 ccdGain = 1
@@ -614,7 +617,9 @@ for (idx in seq(1,nrow(dfCat))){
     imgWarpList[[expName]] = Rwcs_warp(image_in=imgCutList[[jj]], header_out = imgCutList[[1]]$raw)
     skyList[[expName]] = Rwcs_warp(image_in=skyGrid$sky, header_in = imgCutList[[jj]]$raw, header_out = imgCutList[[1]]$raw)$imDat
     skyRMSList[[expName]] = Rwcs_warp(image_in=skyGrid$skyRMS, header_in = imgCutList[[jj]]$raw, header_out = imgCutList[[1]]$raw)$imDat
+    
     maskWarpList[[expName]] = apply(round(Rwcs_warp(image_in=maskList[[jj]], header_in = imgCutList[[jj]]$raw, header_out = imgCutList[[1]]$raw)$imDat, digits=0), c(1,2), as.integer)
+    maskWarpList[[expName]][is.na(maskWarpList[[expName]])] = 1 # NAs produced by unoccupied regions in the warped mask should be converted to 1, i.e. masked
     
     # Load or Generate PSF
     psfFilename = glue('{psfsDir}/{sourceName}_{expName}_psf.fits')
@@ -674,7 +679,7 @@ for (idx in seq(1,nrow(dfCat))){
   
   ### Run profoundProfound on the median stack of cutouts:
   printf("INFO: Creating segmentation map for median stacked image.")
-  seg = profoundProFound(image=imgCutStack, mask=maskStack, sigma=1.25, size=9, skycut=0.9, SBdilate=2.5, tolerance=9, reltol=1.1, ext=7, redoskysize=65, plot=FALSE)
+  seg = profoundProFound(image=imgCutStack, mask=maskStack, sigma=1.25, size=9, skycut=0.9, SBdilate=2.5, tolerance=7, reltol=1.1, ext=5, redoskysize=55, plot=F)
   
   if (toPlot|toSave){
     if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-segmentation_map.png"), width=650, height=650, pointsize=20)}
@@ -685,17 +690,13 @@ for (idx in seq(1,nrow(dfCat))){
   ### Subtract sky
   printf("INFO: Measuring sky statistics for each exposure and subtracting from cutout images.")
   segimList = list()
-  imgList = list()
+  imgList = list() # The sky subtracted image cutouts
   for (jj in seq(1,numExps)){
     expName = dfCat[[glue('name_exp{jj}')]][idx]
     
     segimList[[expName]] = apply(round(Rwcs_warp(image_in=seg$segim, header_in = imgCutList[[1]]$raw, header_out = imgCutList[[jj]]$raw, doscale = FALSE, interpolation='nearest')$imDat, digits=0), c(1,2), as.integer)
     segimList[[expName]] = profoundMakeSegimDilate(segim=segimList[[expName]],size=3)$segim # This dilation will catch any aliasing holes caused by warping integers maps onto different (typically rotated) grids
     segimList[[expName]][is.na(segimList[[expName]])] = 0
-    
-    # testing
-    #profoundSegimPlot(image=imgCutList[[jj]]$imDat, segim=segimList[[jj]], mask=maskList[[jj]], bad=NA)
-    
     
     if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-{expNameList[jj]}_sky_statistics.png"), width=720, height=720, pointsize=16)}
     if (toPlot|toSave){par(mfrow=c(2,2), mar = c(1,1,1,1))}
@@ -738,8 +739,6 @@ for (idx in seq(1,nrow(dfCat))){
   
   ### Calculate offsets and rotations between frames
   printf("INFO: Calculating offsets/rotations between exposures.")
-  segStatsList = list()
-  
   offsets = list() # The offsets are just the sub-pixel offsets between positions as the cutouts are already centered on the pixel positions.
   xrots = list() # rotations from the x-axis
   yrots = list() # rotations from the y-axis (!= xrots + 90, because HST images have skew)
@@ -749,19 +748,6 @@ for (idx in seq(1,nrow(dfCat))){
   
   xrot1 = rad2deg(atan2(-cdsign*cds[2], cds[1]))
   yrot1 = rad2deg(atan2(cdsign*cds[3], cds[4]))
-  if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-offsets.png"), width=1200, height=600*(1+(numExps-1)%/%4), pointsize=10)}
-  if (toPlot|toSave){
-    plotArr = matrix(seq(1,8), nrow = 2)
-    if (numExps > 4){
-      for (ii in seq(1+(numExps-1)%/%4)){ # extra rows
-        print(ii)
-        plotArr = rbind(plotArr, matrix(seq(8*ii+1,8*(ii+1)), nrow = 2))
-      }
-    }
-    layout(plotArr, widths = rep(1/4,4), heights=rep(1/2*(1+(numExps-1)%/%4),2*(1+(numExps-1)%/%4)))
-    #par(mar = c(1.25,1.25,1.25,1.25), oma = c(0.25,0.25,0.25,0.25))
-  }
-  
   for (jj in seq(1,numExps)){
     
     cds = from_header(hdrCutList[[jj]], keys = c('CD1_1','CD2_1','CD1_2','CD2_2'), as=as.numeric)
@@ -772,21 +758,72 @@ for (idx in seq(1,nrow(dfCat))){
     #offsets[[jj]] = c(dfCat[[glue('x_exp{jj}')]][idx]%%1 - dfCat[['x_exp1']][idx]%%1, dfCat[[glue('y_exp{jj}')]][idx]%%1 - dfCat[['y_exp1']][idx]%%1, yrots[[jj]] - yrot1)
     offsets[[jj]] = c(srcLocList[[jj]][1]%%1 - srcLocList[[1]][1]%%1, srcLocList[[jj]][2]%%1 - srcLocList[[1]][2]%%1, yrots[[jj]] - yrot1)
     
+  }
+  
+  
+  segStatsList = list()
+  segExpList = list()
+  wcsOffsets = list()
+  if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-offsets.png"), width=3000, height=1500*(1+(numExps-1)%/%4), pointsize=16)}
+  if (toPlot|toSave){
+    plotArr = matrix(seq(1,8), nrow = 2)
+    if (numExps > 4){
+      for (ii in seq((numExps-1)%/%4)){ # extra rows
+        plotArr = rbind(plotArr, matrix(seq(8*ii+1,8*(ii+1)), nrow = 2))
+      }
+    }
+    layout(plotArr, widths = rep(1/4,4), heights=rep(1/2*(1+(numExps-1)%/%4),2*(1+(numExps-1)%/%4)))
+  }
+  
+  
+  for (jj in seq(1,numExps)){
     # Run profound to get segment statistics
-    profoundSegimPlot(image=imgWarpList[[jj]]$imDat, segim=seg$segim, mask=maskWarpList[[jj]], magzero=magzpList[[jj]], pixscale=pixScaleHST)
-    segStatsList[[jj]] = profoundSegimStats(image=imgWarpList[[jj]]$imDat, header=imgWarpList[[jj]]$raw, segim=seg$segim, mask=maskWarpList[[jj]],
+    imgWarpList[[jj]]$imDat[is.nan(imgWarpList[[jj]]$imDat)] = NA
+    segExpList[[jj]] = profoundProFound(image=imgWarpList[[jj]]$imDat, header=imgWarpList[[jj]]$raw, segim=seg$segim, mask=maskWarpList[[1]] | maskWarpList[[jj]], plot=F,
                                              sky=0, skyRMS = skyRMSList[[jj]], magzero=magzpList[[jj]], pixscale=pixScaleHST, boundstats = T)
+    segStatsList[[jj]] = segExpList[[jj]]$segstats
+    tempseg = segExpList[[jj]]$segim
     
     if (jj != 1){
-      xmatch = coordmatch(segStatsList[[1]][,c("RAcen","Deccen")], segStatsList[[jj]][,c("RAcen","Deccen")], rad=1)
-      matched = !is.na(segStatsList[[1]][xmatch$bestmatch[,1],"mag"]) & !is.na(segStatsList[[jj]][xmatch$bestmatch[,2],"mag"])
-      xdiffs = segStatsList[[1]][xmatch$bestmatch[matched,1],"xmax"] - segStatsList[[jj]][xmatch$bestmatch[matched,2],"xmax"]
-      ydiffs = segStatsList[[1]][xmatch$bestmatch[matched,1],"ymax"] - segStatsList[[jj]][xmatch$bestmatch[matched,2],"ymax"]
-      magbin(xdiffs, ydiffs, xlim=c(-15,15), ylim=c(-15,15), Nbin = 16, dustlim=0)
+      xmatch = coordmatch(segStatsList[[1]][,c("RAcen","Deccen")], segStatsList[[jj]][,c("RAcen","Deccen")], rad=0.1, radunit="asec")$bestmatch # 0.1 arcsec = 2 pixels
+      
+      inboth = c()
+      for (ii in seq_along(xmatch[,1])){
+        if (anyNA(imgWarpList[[1]]$imDat[segExpList[[1]]$segim == xmatch[ii,'refID']]) | anyNA(imgWarpList[[jj]]$imDat[segExpList[[jj]]$segim == xmatch[ii,'compareID']])){
+          inboth[ii] =  FALSE
+        } else {
+          inboth[ii] = TRUE
+        }
+      }
+      
+      tempseg[!tempseg %in% segStatsList[[jj]][xmatch[inboth,2],'segID']] = 0
+      
+      xdiffs = segStatsList[[1]][xmatch[inboth,1],"xmax"] - segStatsList[[jj]][xmatch[inboth,2],"xmax"]
+      ydiffs = segStatsList[[1]][xmatch[inboth,1],"ymax"] - segStatsList[[jj]][xmatch[inboth,2],"ymax"]
+      magbin(xdiffs, ydiffs, xlim=c(-15,15), ylim=c(-15,15), step=1, dustlim=0, shape = 'sq')
       
       points(x=offsets[[jj]][1], y=offsets[[jj]][2], pch=4, col='red', cex=2)
+      
+      dxwcs = median(xdiffs)
+      dywcs = median(ydiffs)
+      wcsOffsets[[jj]] = c(dxwcs, dywcs)
+      
+      points(x=dxwcs, y=dywcs, pch=3, col='magenta', cex=2)
+      printf("{expNameList[[jj]]}: x={dxwcs}, y={dywcs}")
+      
+      profoundSegimPlot(image=imgWarpList[[jj]]$imDat, header=imgWarpList[[jj]]$raw, segim=tempseg, mask=maskWarpList[[1]] | maskWarpList[[jj]],
+                        sky=0, skyRMS = skyRMSList[[jj]], magzero=magzpList[[jj]], pixscale=pixScaleHST, boundstats = T)
+      
+      points(x=segStatsList[[jj]][xmatch[inboth,2],"xcen"], y=segStatsList[[jj]][xmatch[inboth,2],"ycen"], pch=3, col='magenta',cex=2)
+      points(x=segStatsList[[1]][xmatch[inboth,1],"xcen"], y=segStatsList[[jj]][xmatch[inboth,1],"ycen"], pch=4, col='yellow',cex=2)
+      
     } else {
       plot(x=offsets[[jj]][1], y=offsets[[jj]][2], pch=4, col='red', cex=2, xlim=c(-15,15), ylim=c(-15,15))
+      
+      profoundSegimPlot(image=imgWarpList[[jj]]$imDat, header=imgWarpList[[jj]]$raw, segim=tempseg, mask=maskWarpList[[1]] | maskWarpList[[jj]],
+                        sky=0, skyRMS = skyRMSList[[jj]], magzero=magzpList[[jj]], pixscale=pixScaleHST, boundstats = T)
+      
+      wcsOffsets[[jj]] = c(0, 0)
     }
     
     text(-15,15,as.character(dfCat[[glue('name_exp{jj}')]][idx]), adj=0, col='black', cex=1.25+0.5*(numExps-1)%/%4)
@@ -879,6 +916,7 @@ for (idx in seq(1,nrow(dfCat))){
   if (class(check)=='try-error'){
     printf("ERROR: source {sourceName} ({idx}) failed to be fit.")
     write(sourceName,file=badIDFilename,append=TRUE)
+    dev.off()
   } else {
     printf("INFO: source {sourceName} ({idx}) successfully fit.")
   }
