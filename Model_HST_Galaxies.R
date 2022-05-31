@@ -43,23 +43,23 @@ parser$add_argument("-n","--name",
 args = parser$parse_args()
 
 #args = list(inputcat = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Catalogues/Subcats/Pilot/DEVILS_HST_pilot_subcat_0.csv', models = 'single', computer = 'local', name = 'test')
-#args$inputcat = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Catalogues/Subcats/Alpha/DEVILS_HST_alpha_subcat_201.csv'
 #args$inputcat = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Catalogues/Subcats/DEVILS_HST_pilot_sample_sorted.csv'
-#args$models = c('single', 'psf-exp')
+
 
 if (is.null(args$computer)){
-  nCores = 24#strtoi(Sys.getenv('SLURM_CPUS_PER_TASK', unset=1))
-  source('path to scripts')
+  nCores = strtoi(Sys.getenv('SLURM_CPUS_PER_TASK', unset=1))
 } else if (args$computer == 'local'){
   nCores = strtoi(Sys.getenv('SLURM_CPUS_PER_TASK', unset=1))
 } else if (args$computer == 'magnus') {
-  #.libPaths(c('/home/sbellstedt/R/x86_64-suse-linux-gnu-library/3.6',.libPaths()))
   .libPaths(c('/group/pawsey0160/rhwcook/r/3.6',.libPaths()))
   nCores = 24 #strtoi(Sys.getenv('SLURM_CPUS_PER_TASK', unset=1))
 } else if (args$computer == 'zeus') {
   .libPaths(c("/group/pawsey0160/software/sles12sp3/apps/sandybridge/gcc/4.8.5/r/3.6.3/lib64/R/library",.libPaths()))
-  nCores = 4 #strtoi(Sys.getenv('SLURM_CPUS_PER_TASK', unset=1))
+  nCores = 20 #strtoi(Sys.getenv('SLURM_CPUS_PER_TASK', unset=1))
 }
+
+cat(paste0(".libPaths(): ",.libPaths(),"\n"))
+sessionInfo()
 
 library(ProFound)
 library(ProFit)
@@ -108,7 +108,6 @@ printf = function(txt,end='\n'){
   }
   
   cat(glue(txt),sep=end)
-  
 }
 
 
@@ -123,6 +122,7 @@ number2binary = function(number, numbits) {
     return(binary_vector[1:(length(binary_vector) - numbits)])
   }
 }
+
 
 ### Check whether a pixel should be masked based on the value in the corresponding Data Quality map.
 mask_pixel = function(dqval, flags=c(3,5,8,10,13)){
@@ -223,220 +223,6 @@ get_model_opts = function(model){
 }
 
 
-### Plot the fitting results of multiple exposures in a single figure
-profitImageScale = function(z, zlim, col = heat.colors(12),
-                            breaks, axis.pos=1, axis.padj=0, add.axis=TRUE, axis.tck = 0, ...){
-  if(!missing(breaks)){
-    if(length(breaks) != (length(col)+1)){stop("must have one more break than colour")}
-  }
-  if(missing(breaks) & !missing(zlim)){
-    breaks <- seq(zlim[1], zlim[2], length.out=(length(col)+1)) 
-  }
-  if(missing(breaks) & missing(zlim)){
-    zlim <- range(z, na.rm=TRUE)
-    zlim[2] <- zlim[2]+c(zlim[2]-zlim[1])*(1E-3)#adds a bit to the range in both directions
-    zlim[1] <- zlim[1]-c(zlim[2]-zlim[1])*(1E-3)
-    breaks <- seq(zlim[1], zlim[2], length.out=(length(col)+1))
-  }
-  poly <- vector(mode="list", length(col))
-  for(i in seq(poly)){
-    poly[[i]] <- c(breaks[i], breaks[i+1], breaks[i+1], breaks[i])
-  }
-  if(axis.pos %in% c(1,3)){ylim<-c(0,1); xlim<-range(breaks)}
-  if(axis.pos %in% c(2,4)){ylim<-range(breaks); xlim<-c(0,1)}
-  plot(1,1,t="n",ylim=ylim, xlim=xlim, axes=FALSE, xlab="", ylab="", xaxs="i", yaxs="i", ...)  
-  for(i in seq(poly)){
-    if(axis.pos %in% c(1,3)){
-      polygon(poly[[i]], c(0,0,1,1), col=col[i], border=NA)
-    }
-    if(axis.pos %in% c(2,4)){
-      polygon(c(0,0,1,1), poly[[i]], col=col[i], border=NA)
-    }
-  }
-  box()
-  if(add.axis) {axis(axis.pos, padj=axis.padj, tck=axis.tck)}
-}
-
-multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magzps, offsets,
-                               whichcomponents=list(sersic="all",moffat="all",ferrer="all",pointsource="all"),
-                               cmap = rev(colorRampPalette(brewer.pal(9,'RdYlBu'))(100)),
-                               errcmap = rev(c("#B00000",colorRampPalette(brewer.pal(9,'RdYlBu'))(100)[2:99],"#0000B0")),
-                               errischisq=FALSE, dofs=0){
-  
-  contlw = 3
-  maxsigma = 5
-  
-  ndofs = ifelse(missing(dofs), 0, length(dofs)) # degrees of freedom
-  if(ndofs>0) stopifnot(length(dofs) <= 2)
-  
-  parmar = c(0.5,0.5,0.25,0)
-  par(mar=parmar, oma=c(1,1,1,1), mgp=c(0,0,0))
-  
-  # Create the plotting layout
-  nrows = 5
-  ncols = datalist$Nim + 1
-  plotArr = cbind(c(1,2,3,4+(ncols-1)*nrows,0) ,array(seq(4, 4+(ncols-1)*nrows-1), dim=c(nrows,ncols-1)))
-  layout(plotArr, widths=c(rep((1-0.05)/ncols,ncols), 0.05),heights=rep(1/5,5))
-  
-  ## Segmentation map plot
-  if (missing(segim)){
-    magimage(image=imagestack)
-  } else {
-    profound = profoundProFound(image=imagestack, segim=segim)
-    targetIdx = which(profound$segstats$segID == profound$segim[dim(imagestack)[1]%/%2,dim(imagestack)[2]%/%2])
-    cutBox = rep(min(profound$segstats$R90[[targetIdx]]*10, dim(imagestack)[1]),2)
-    imageCut = magcutout(image=imagestack, loc=c(profound$segstats$xcen[[targetIdx]],profound$segstats$ycen[[targetIdx]]), box=cutBox)$image
-    segimCut = magcutout(image=segim, loc=c(profound$segstats$xcen[[targetIdx]],profound$segstats$ycen[[targetIdx]]), box=cutBox)$image
-    profoundSegimPlot(image=imageCut, segim=segimCut)
-  }
-  
-  if (missing(offsets)){
-    offsets = list()
-    for (ii in seq(datalist$Nim)){
-      offsets[[ii]] = datalist[[ii]]$offset
-    }
-  }
-  
-  for (ii in seq(1,datalist$Nim)){ # loop over all exposures
-    image = datalist[[ii]]$image
-    region = datalist[[ii]]$region
-    sigma = datalist[[ii]]$sigma
-    magZP = magzps[[ii]] #datalist[[ii]]$magzero
-    #print(magZP)
-    
-    fitModellist = profitRemakeModellist(parm = parm, Data = datalist[[ii]], offset = offsets[[ii]])$modellist
-    modelimage = profitMakeModel(modellist = fitModellist, 
-                                 magzero = magZP, psf = datalist[[ii]]$psf, dim = dim(image),
-                                 psfdim = dim(datalist[[ii]]$psf), whichcomponents = whichcomponents)$z
-    
-    data = list(x=1:dim(image)[1],y=1:dim(image)[2],z=image)
-    residual = image - modelimage
-    
-    medimg = median(abs(image[region]))/2
-    maximg = max(abs(image[region]))
-    
-    zlims = c(0,1)
-    stretch="asinh"
-    stretchscale = 1/medimg
-    
-    if (ii==1){
-      ## Model image plot
-      magimage(modelimage, stretchscale=stretchscale, stretch=stretch, lo=-maximg, hi=maximg, zlim=zlims, type='num', col=cmap)
-      
-      targetseg = datalist[[ii]]$segim # get the segmentation map of just the target galaxy
-      targetseg[targetseg != targetseg[dim(image)[1]%/%2,dim(image)[2]%/%2]] = 0
-      
-      segcon = magimage(1-targetseg, add=T, col=NA)
-      contour(segcon, add=T, drawlabels = F, levels=1, col='darkgreen', lwd=contlw)
-      legend('topleft', legend='Model') # change region to segim
-      
-      ## Colorbar
-      par(mar = parmar + c(0,max(2,22-2*ncols),0,0), mgp=c(0,0,0))
-      breaks = seq(-maxsigma, maxsigma, length.out=length(cmap)+1)
-      profitImageScale(zlim=c(-maxsigma,maxsigma), col=errcmap, breaks = breaks, axis.pos=2, axis.padj=1)
-      
-    }
-    
-    par(mar=parmar, mgp=c(0,0,0))
-    
-    ## Data image plot
-    magimage(data$z, stretchscale=stretchscale, stretch=stretch, lo=-maximg, hi=maximg, zlim=zlims, type='num', col=cmap)
-    
-    tempcon=magimage(1-region, add=T, col=NA)
-    contour(tempcon, add=T, drawlabels = F, levels=1, col='darkgreen', lwd=contlw)
-    legend('topleft', legend='Data', cex=1.25)
-    
-    ## Data - Model image plot
-    magimage(residual, stretchscale=stretchscale, stretch=stretch, lo=-maximg, hi=maximg, zlim=zlims, type='num', col=cmap)
-    contour(tempcon, add=T, drawlabels = F, levels=1, col='darkgreen', lwd=contlw)
-    legend('topleft', legend='Data-Model', cex=1.25)
-    
-    
-    ## Chi-squared plots
-    errsign = (-1)^(image > modelimage)
-    if(!errischisq){
-      error = residual/sigma
-    } else {
-      error = errsign*sqrt(abs(sigma))
-    }
-    
-    errmap = error
-    error = error[region]
-    maxerr = max(abs(error))
-    stretcherr = 1/median(abs(error))
-    errmap[!region & (errmap>maxerr)] = maxerr
-    minerr = -maxerr
-    
-    errmap[!region & (errmap<minerr)] = minerr
-    errmap[errmap > maxsigma] = maxsigma
-    errmap[errmap < -maxsigma] = -maxsigma
-    
-    magimage(errmap, magmap=FALSE, zlim=c(-maxsigma,maxsigma), col=errcmap)
-    contour(tempcon, add=T, drawlabels = F, levels=1, col='darkgreen', lwd=contlw)
-    legend('topleft',legend=bquote(chi*"=(Data-Model)"/sigma), cex=1.25)
-    
-    dx = 0.1
-    xlims = c(-4,4)
-    x = seq(xlims[1],xlims[2],dx)
-    y = hist(error,breaks=c(-(maxerr+dx),x,maxerr+dx),plot=FALSE)$count[2:length(x)]/sum(region)/dx
-    
-    ylims = c(min(y[y>0]), 0.5)
-    y[y<=0] = ylims[1]/10
-    
-    vardata = var(error)
-    tdof=2*vardata/(vardata-1)
-    tdof=LaplacesDemon::interval(tdof,0,Inf)
-    
-    magplot(x[1:(length(x)-1)]+dx,y, xlim=xlims, ylim=ylims, xlab="",ylab="", xaxs="i", type="s",log="y")
-    lines(x, dnorm(x), col="blue", xaxs="i")
-    lines(x, dt(x,tdof), col="red", xaxs="i")
-    
-    labs = c(expression(chi),bquote(norm(1)),bquote(Student-T(.(signif(tdof,5)))))
-    cols = c("black","blue","red")
-    ltys = c(1,1,1)
-    legend("bottom",legend=labs,col=cols,lty=ltys, cex=1.25)    
-    
-    error = log10(error^2)
-    xr = range(error)
-    xlims = c(-3,min(2,max(xr)))
-    x = seq(xlims[1],xlims[2],dx)
-    dxbin = 10^x[2:length(x)]-10^x[1:(length(x)-1)]
-    y = hist(error,breaks=c(xr[1]-dx,x,xr[2]+dx), plot=FALSE)$count[2:length(x)]
-    y = y/sum(y)/dxbin
-    ylims = c(min(y[y>0]),10)
-    y[y<=0] = ylims[1]/10
-    magplot(x[1:(length(x)-1)]+dx, y, xlim=xlims, ylim=ylims, xlab="",ylab="", xaxs="i", type="s",log="y")
-    xp=10^x
-    lines(x, dchisq(xp,1), col="blue", xaxs="i")
-    labs = c(bquote(chi^2),expression(chi^2*(1)))
-    cols = c("black","blue")
-    
-    if(ndofs > 0){
-      dofcols = c("red", "darkgreen")
-      for(i in 1:length(dofs)){
-        dofstr = sprintf("%.3e",dofs[i])
-        lines(x, dchisq(xp,dofs[i]), col=dofcols[i], xaxs="i")
-        labs = c(labs,bquote(chi^2 (.(dofstr))))
-        ltys = c(ltys,1)
-        cols = c(cols, dofcols[i])
-      }
-    }
-    
-    abline(v=0,lty=2,col='red')
-    legend("bottomleft",legend=labs,col=cols,lty=ltys, cex=1.25)
-    
-  }
-  
-  ### Plot text
-  if (!missing(plottext)){
-    par(mar = c(0,0,0,0), mgp = c(3,1,0))
-    plot(c(0, 1), c(0, 1), ann = F, bty = 'n', type = 'n', xaxt = 'n', yaxt = 'n')
-    text(x = 0.0, y = 0.9, plottext, adj=c(0,1),
-         cex = 1.5, col = "black")
-  }
-  
-}
-
 
 ##############################
 ### Define some parameters ###
@@ -459,6 +245,8 @@ if (args$computer == 'local'){
   goodIDFilename = glue('/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/Status/Successful_IDs_{args$name}_{date}.txt')
   logsDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/Logs'
   
+  source('/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Programs/HST-structural-decomposition/Model_plots.R')
+  
 } else if (args$computer == 'magnus' | args$computer == 'zeus'){
   baseDir = '/group/pawsey0160/rhwcook/HST_Structural_Decomposition'
   
@@ -473,6 +261,9 @@ if (args$computer == 'local'){
   badIDFilename = glue('{baseDir}/Results/Status/Failed_IDs_{args$name}_{date}.txt')
   goodIDFilename = glue('{baseDir}/Results/Status/Successful_IDs_{args$name}_{date}.txt')
   logsDir = glue('{baseDir}/Results/Logs/{args$name}')
+  
+  source('{baseDir}/Scripts/Model_plots.R')
+  
 }
 
 if (!file.exists(logsDir)){
@@ -480,7 +271,6 @@ if (!file.exists(logsDir)){
   dir.create(logsDir)
 }
 
-cat(paste0(".libPaths(): ",.libPaths(),"\n"))
 
 # Set up some parallel code
 registerDoParallel(cores=nCores)
@@ -940,12 +730,10 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
                                               rough=roughFit, tightcrop = TRUE, deblend_extra=FALSE, fit_extra=FALSE, plot=toPlot)
         
         
-        # Can I actually do this? - yes!
+        # Rename F2F objects according to their exposure name
         for (jj in seq(1, numExps)){
           names(dataList)[names(dataList) == paste0("image",jj)] = expNameList[jj]
         }
-        
-        #profitLikeModel(dataList[[1]]$init,Data = dataList[[1]], makeplots = T, plotchisq = T)
         
         cat(paste0("INFO: Running Highlander optimisation for model '",model,"'.\n"))
         cat(paste0("Optim iters: ",optimOpts$optim_iters,"\nNiters: ",optimOpts$Niters,"\nNfinalMCMC: ",optimOpts$NfinalMCMC,"\nwalltime: ",optimOpts$walltime,"\n\n"))
@@ -954,12 +742,14 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
                                          CMAargs = optimOpts$CMA, LDargs = optimOpts$LD)
         
         if (toPlot|toSave){
-          if (toSave) {CairoPNG(filename=paste0(plotDir,'/',sourceName,'/',sourceName,'_',model,'_multifit.png'), width=(numExps+1)*300, height=1800, pointsize=20)}
+          if (toSave) {CairoPNG(filename=paste0(plotDir,'/',sourceName,'/',sourceName,'_',model,'_multifit.png'), width=(numExps+1)*325+60, height=1000, pointsize=20)}
           multiImageMakePlots(datalist=dataList, imagestack=imgCutStack, segim=seg$segim, parm=highFit$parm, magzps = magzpList,
                               plottext=paste0("UID:\n",sourceName,"\n\n # Exposures: ",dataList$Nim,"\n log(Mstar): ",format(round(log10(dfCat[['StellarMass']][idx]), 2), nsmall = 2),"\n z: ",format(round(dfCat[['zBest']][ii], 3), nsmall = 2)))
-          # if (toSave) {CairoPNG(filename=glue('/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Tests/{result$sourceName}_{result$models[1]}_multifit.png'), width=(length(result$expNames)+1)*300, height=1800, pointsize=20)}
-          # multiImageMakePlots(datalist=result$dataList$single, imagestack=result$imgStack, segim=result$segimList[[1]], parm=result$highFit$single$parm)# magzps = result$magzpList)
-          # 
+          # modelnum = 2
+          # if (toSave) {CairoPNG(filename=paste0('/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Tests/',result$sourceName,'_',result$models[modelnum],'_multifit.png'), width=(length(result$expNames)+1)*325+50, height=1000, pointsize=20)}
+          # multiImageMakePlots(datalist=result$dataList[[modelnum]], imagestack=result$imgStack, segim=result$segimList[[1]], parm=result$highFit[[modelnum]]$parm, magzps = result$magzpList,
+          #                     plottext=paste0("UID:\n",result$sourceName,"\n\n # Exposures: ",result$numimgs,"\n log(Mstar): ",format(round(log10(result$row[['StellarMass']][1]), 2), nsmall = 2),"\n z: ",format(round(result$row[['zBest']][1], 3), nsmall = 2)))
+          
           if (toSave){dev.off()}
         }
         
@@ -970,7 +760,7 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         ### Save plots of resulting model ###
         if(toSave & modelOpts$n_comps>=2){ # fix to add fake bulge if single component chosen.
           png(filename = paste0(plotDir,'/',sourceName,'/',sourceName,'_',model,'_radial_profile.png'), width=720, height=480, pointsize=16)
-          profitEllipsePlot(Data=dataList[[1]], modellist=optimModellist, pixscale=pixScaleHST, SBlim=25)
+          profitEllipsePlot(Data=dataList[[1]], modellist=optimModellist, pixscale=pixScaleHST, SBlim=25, fwhm=0.1) # 0.1 arcsec is the typical HST ACS PSF width at F814W from the COSMOS Survey 
           dev.off()
         }
         
