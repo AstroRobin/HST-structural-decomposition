@@ -18,7 +18,7 @@
 ## Date: 22/02/2022
 
 ## Usage:
-# >> Rscript Model_HST_Galaxies.R --inputcat=[PATH] --model=[MODEL] --computer=['local'|'magnus'] --name=[NAME]
+# >> Rscript Model_HST_Galaxies.R --inputcat=[PATH] --models=[MODEL] --computer=['local'|'magnus'] --name=[NAME]
 
 #######################################
 ### Get arguments from command-line ###
@@ -29,8 +29,8 @@ parser = ArgumentParser()
 parser$add_argument("-i","--inputcat",required=TRUE,
                     action='store',dest='inputcat',type='character',default=NULL,
                     help="The catalogue of galaxy sources over which to run the optimisation routine.",metavar="PATH")
-parser$add_argument("-m","--model",
-                    action='store',dest='model',type='character',default=NULL,choices=c('single','psf-exp','deV-exp','psf-free','deV-free','free-exp','free-free'),
+parser$add_argument("-m","--models",
+                    action='store',dest='models',type='character',nargs='+',default=NULL,choices=c('single','psf-exp','deV-exp','psf-free','deV-free','free-exp','free-free'),
                     help="The model type to be optimised.",metavar="ID")
 parser$add_argument("-c","--computer",
                     action='store',dest='computer',type='character',default=NULL,choices=c('local','magnus'),
@@ -42,9 +42,10 @@ parser$add_argument("-n","--name",
 # Parse arguments and validate
 args = parser$parse_args()
 
-#args = list(inputcat = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Catalogues/Subcats/Pilot/DEVILS_HST_pilot_subcat_0.csv', model = 'single', computer = 'local', name = 'test')
+#args = list(inputcat = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Catalogues/Subcats/Pilot/DEVILS_HST_pilot_subcat_0.csv', models = 'single', computer = 'local', name = 'test')
 #args$inputcat = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Catalogues/Subcats/DEVILS_HST-ACS_exposure_positions_rotations.csv'
-args$inputcat = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Catalogues/Subcats/DEVILS_HST_pilot_sample.csv'
+#args$inputcat = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Catalogues/Subcats/DEVILS_HST_pilot_sample_sorted.csv'
+#args$models = c('single', 'psf-exp')
 
 if (is.null(args$computer)){
   nCores = 24#strtoi(Sys.getenv('SLURM_CPUS_PER_TASK', unset=1))
@@ -53,7 +54,7 @@ if (is.null(args$computer)){
 } else if (args$computer == 'magnus') {
   #.libPaths(c('/home/sbellstedt/R/x86_64-suse-linux-gnu-library/3.6',.libPaths()))
   .libPaths(c('/group/pawsey0160/rhwcook/r/3.6',.libPaths()))
-  nCores = strtoi(Sys.getenv('SLURM_CPUS_PER_TASK', unset=1)) #nCores = 24
+  nCores = 24 #strtoi(Sys.getenv('SLURM_CPUS_PER_TASK', unset=1))
 }
 
 library(ProFound)
@@ -68,6 +69,7 @@ library(celestial)
 library(Rwcs)
 
 library(RColorBrewer)
+library(Cairo)
 
 library(foreach) # Parallel evaluation of for loops
 library(doParallel) # Parallel backend for the foreach's %dopar% function 
@@ -100,8 +102,9 @@ printf = function(txt,end='\n'){
       txt = gsub(sub, paste0('format(round(',val,', ',ndecimal,'), nsmall=',ndecimal,')'), txt)
     }
   }
+
+  cat(glue(txt),sep=end)
   
-  cat(glue(txt),end)
 }
 
 
@@ -155,6 +158,63 @@ from_header = function(hdr, keys, as=NULL){
   } else {
     return (vals)
   }
+  
+}
+
+
+### For the list of pre-defined model types, set the appropriate model options.
+get_model_opts = function(model){
+  modelOpts = list(disk_nser = 1, # Disk Sersic indec always starts with exponential
+                   bulge_nser = 4, # Bulge Sersic indec always starts with de Vaucouleurs
+                   bulge_circ = TRUE) # A circular bulge (i.e., axrat = 1))
+  
+  if (model == 'single'){ # Single component Sersic (pure-disks and Ellipticals)
+    modelOpts = c(modelOpts, 
+                  list(n_comps = 1,
+                       sing_nser_fit = TRUE,
+                       disk_nser_fit = FALSE,
+                       bulge_nser_fit = FALSE))
+  } else if (model == 'psf-exp'){ # PSF bulge + Exponential disk
+    modelOpts = c(modelOpts, 
+                  list(n_comps = 1.5,
+                       sing_nser_fit = FALSE,
+                       disk_nser_fit = FALSE,
+                       bulge_nser_fit = FALSE))
+  } else if (model == 'deV-exp'){  # de Vaucouleurs bulge + Exponential disk (Canonical light profiles)
+    modelOpts = c(modelOpts, 
+                  list(n_comps = 2,
+                       sing_nser_fit = FALSE,
+                       disk_nser_fit = FALSE,
+                       bulge_nser_fit = FALSE))
+  } else if (model == 'psf-free'){  # PSF bulge + Free disk
+    modelOpts = c(modelOpts, 
+                  list(n_comps = 1.5,
+                       sing_nser_fit = FALSE,
+                       disk_nser_fit = TRUE,
+                       bulge_nser_fit = FALSE))
+  } else if (model == 'deV-free'){  # de Vaucouleurs bulge + Free disk
+    modelOpts = c(modelOpts, 
+                  list(n_comps = 2,
+                       sing_nser_fit = FALSE,
+                       disk_nser_fit = TRUE,
+                       bulge_nser_fit = FALSE))
+  } else if (model == 'free-exp'){  # Free bulge + Exponential disk (pseudobulges?)
+    modelOpts = c(modelOpts, 
+                  list(n_comps = 2,
+                       sing_nser_fit = FALSE,
+                       disk_nser_fit = FALSE,
+                       bulge_nser_fit = TRUE))
+  } else if (model == 'free-free'){  # Free bulge + Free disk (Most flexibile model, least constrained)
+    modelOpts = c(modelOpts, 
+                  list(n_comps = 2,
+                       sing_nser_fit = FALSE,
+                       disk_nser_fit = TRUE,
+                       bulge_nser_fit = TRUE))
+  } else {
+    cat(paste0("ERROR: Model name '",model,"' not recognised.\n"))
+  }
+  
+  return(modelOpts)
   
 }
 
@@ -220,8 +280,9 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magz
   } else {
     profound = profoundProFound(image=imagestack, segim=segim)
     targetIdx = profound$segim[dim(imagestack)[1]%/%2,dim(imagestack)[2]%/%2]
-    imageCut = magcutout(image=imagestack, loc=c(profound$segstats$xcen[[targetIdx]],profound$segstats$ycen[[targetIdx]]), box=rep(profound$segstats$R90[[targetIdx]]*5,2))$image
-    segimCut = magcutout(image=segim, loc=c(profound$segstats$xcen[[targetIdx]],profound$segstats$ycen[[targetIdx]]), box=rep(profound$segstats$R90[[targetIdx]]*5,2))$image
+    cutBox = rep(min(profound$segstats$R90[[targetIdx]]*10, dim(imagestack)[1]),2)
+    imageCut = magcutout(image=imagestack, loc=c(profound$segstats$xcen[[targetIdx]],profound$segstats$ycen[[targetIdx]]), box=cutBox)$image
+    segimCut = magcutout(image=segim, loc=c(profound$segstats$xcen[[targetIdx]],profound$segstats$ycen[[targetIdx]]), box=cutBox)$image
     profoundSegimPlot(image=imageCut, segim=segimCut)
   }
   
@@ -258,12 +319,15 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magz
       ## Model image plot
       magimage(modelimage, stretchscale=stretchscale, stretch=stretch, lo=-maximg, hi=maximg, zlim=zlims, type='num', col=cmap)
       
-      segcon = magimage(1-datalist[[ii]]$segim, add=T, col=NA)
+      targetseg = datalist[[ii]]$segim # get the segmentation map of just the target galaxy
+      targetseg[targetseg != targetseg[dim(image)[1]%/%2,dim(image)[2]%/%2]] = 0
+      
+      segcon = magimage(1-targetseg, add=T, col=NA)
       contour(segcon, add=T, drawlabels = F, levels=1, col='darkgreen', lwd=contlw)
       legend('topleft', legend='Model') # change region to segim
       
       ## Colorbar
-      par(mar = parmar + c(0,10,0,0), mgp=c(0,0,0))
+      par(mar = parmar + c(0,max(2,24-2*ncols),0,0), mgp=c(0,0,0))
       breaks = seq(-maxsigma, maxsigma, length.out=length(cmap)+1)
       profitImageScale(zlim=c(-maxsigma,maxsigma), col=errcmap, breaks = breaks, axis.pos=2, axis.padj=1)
       
@@ -375,6 +439,7 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magz
 ##############################
 
 # Define filepaths
+date = Sys.Date()
 if (args$computer == 'local'){
   baseDir = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA' # Base directory
   
@@ -386,7 +451,9 @@ if (args$computer == 'local'){
   resultsDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/ProFuse_Outputs' # ProFuse outputs saved here
   plotDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/Plots' # Plots saved here
   
-  badIDFilename = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/Logs/Failed_IDs_{args$model}_{args$name}_{Sys.Date()}.txt' # Which galaxies failed
+  badIDFilename = glue('/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/Status/Failed_IDs_{args$name}_{date}.txt') # Which galaxies failed
+  goodIDFilename = glue('/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/Status/Successful_IDs_{args$name}_{date}.txt')
+  logsDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/Logs'
   
 } else if (args$computer == 'magnus'){
   baseDir = '/group/pawsey0160/rhwcook/HST_Structural_Decomposition'
@@ -399,24 +466,28 @@ if (args$computer == 'local'){
   resultsDir = glue('{baseDir}/Results/ProFuse_Outputs')
   plotDir = glue('{baseDir}/Results/Plots')
   
-  badIDFilename = glue('{baseDir}/Results/Logs/Failed_IDs_{args$model}_{args$name}_{Sys.Date()}.txt')
+  badIDFilename = glue('{baseDir}/Results/Status/Failed_IDs_{args$name}_{date}.txt')
+  goodIDFilename = glue('{baseDir}/Results/Status/Successful_IDs_{args$name}_{date}.txt')
+  logsDir = glue('{baseDir}/Results/Logs/{args$name}')
 }
 
-printf("LibPaths: {.libPaths()}")
+if (!file.exists(logsDir)){
+  cat("INFO: Logs directory did not exist, creating now.\n")
+  dir.create(logsDir)
+}
 
+cat(paste0(".libPaths(): ",.libPaths(),"\n"))
 
 # Set up some parallel code
 registerDoParallel(cores=nCores)
-printf("INFO: Running on {args$computer} machine with [{nCores}] cores.")
+cat(paste0("INFO: Running on ",args$computer," machine with [",nCores,"] cores.\n"))
 
 if (! file.exists(args$inputcat)){
-  stop(glue("ERROR: The input catalogue '{args$inputcat}' does not exist."))
+  stop(paste0("ERROR: The input catalogue '",args$inputcat,"' does not exist."))
 }
-
 
 pids = c('PID09822', 'PID10092', 'PID12440')
 
-#magZP = 35.796 #from_header(hdrCutList[[jj]], 'PHOTZPT', to=as.numeric) 
 pixScaleHST = 0.05 # The pixel scale of HST ACS non-rotated and raw .flt exposure frames.
 ccdGain = 1
 
@@ -427,112 +498,72 @@ clobberPSF = FALSE # IF TRUE, always creates a new PSF using TinyTim; else a new
 
 maxExps = 16 # The maximum number of exposures to use for a single fit
 
-toPlot = FALSE #TRUE # Whether to show plots
-toSave = TRUE # Whether to save plots
-
 cutoutBox = c(601,601) # The size of the box used to cut out images of sources
 skyBoxDims = c(200,200)
 
 roughFit = FALSE
 
-#################################################
-### Select Light Profile Model and Parameters ###
-#################################################
+toPlot = FALSE #TRUE # Whether to show plots
+toSave = TRUE # Whether to save plots
+logsToFile = TRUE # Whether print statements should be sent to separate files (good when running parallel computing)
 
-modelName = args$model #'single','psf-exp','deV-exp','psf-free','deV-free','free-exp','free-free'
+######################################
+### Select Optimisation Parameters ###
+######################################
 
-modelOpts = list(disk_nser = 1, # Disk Sersic indec always starts with exponential
-                 bulge_nser = 4, # Bulge Sersic indec always starts with de Vaucouleurs
-                 bulge_circ = TRUE) # A circular bulge (i.e., axrat = 1))
-
-if (modelName == 'single'){ # Single component Sersic (pure-disks and Ellipticals)
-  modelOpts = c(modelOpts, 
-                list(n_comps = 1,
-                     sing_nser_fit = TRUE,
-                     disk_nser_fit = FALSE,
-                     bulge_nser_fit = FALSE))
-} else if (modelName == 'psf-exp'){ # PSF bulge + Exponential disk
-  modelOpts = c(modelOpts, 
-                list(n_comps = 1.5,
-                     sing_nser_fit = FALSE,
-                     disk_nser_fit = FALSE,
-                     bulge_nser_fit = FALSE))
-} else if (modelName == 'deV-exp'){  # de Vaucouleurs bulge + Exponential disk (Canonical light profiles)
-  modelOpts = c(modelOpts, 
-                list(n_comps = 2,
-                     sing_nser_fit = FALSE,
-                     disk_nser_fit = FALSE,
-                     bulge_nser_fit = FALSE))
-} else if (modelName == 'psf-free'){  # PSF bulge + Free disk
-  modelOpts = c(modelOpts, 
-                list(n_comps = 1.5,
-                     sing_nser_fit = FALSE,
-                     disk_nser_fit = TRUE,
-                     bulge_nser_fit = FALSE))
-} else if (modelName == 'deV-free'){  # de Vaucouleurs bulge + Free disk
-  modelOpts = c(modelOpts, 
-                list(n_comps = 2,
-                     sing_nser_fit = FALSE,
-                     disk_nser_fit = TRUE,
-                     bulge_nser_fit = FALSE))
-} else if (modelName == 'free-exp'){  # Free bulge + Exponential disk (pseudobulges?)
-  modelOpts = c(modelOpts, 
-                list(n_comps = 2,
-                     sing_nser_fit = FALSE,
-                     disk_nser_fit = FALSE,
-                     bulge_nser_fit = TRUE))
-} else if (modelName == 'free-free'){  # Free bulge + Free disk (Most flexibile model, least constrained)
-  modelOpts = c(modelOpts, 
-                list(n_comps = 2,
-                     sing_nser_fit = FALSE,
-                     disk_nser_fit = TRUE,
-                     bulge_nser_fit = TRUE))
-} else {
-  printf("ERROR: Model name '{modelName}' not recognised.")
-}
-
-optimOpts = list(optim_iters=5, Niters=c(200,200), NfinalMCMC=500)
+optimOpts = list(optim_iters=5, Niters=c(200,200), NfinalMCMC=500, walltime=7.5*60) # max walltime of 7.5 hours
+#optimOpts = list(optim_iters=3, Niters=c(100,100), NfinalMCMC=300)
 optimOpts$CMA = list(control=list(maxit=optimOpts$Niters[1]))
 optimOpts$LD = list(control=list(abstol=0.1), Iterations = optimOpts$Niters[2], Status=50, Algorithm = 'CHARM', Thinning = 1, Specs=list(alpha.star=0.44))
 
-
-###########################################
-### Load Source Catalogue and Exposures ###
-###########################################
-printf("INFO: Loading source catalogue")
+#############################
+### Load Source Catalogue ###
+#############################
+cat("INFO: Loading source catalogue\n")
 dfCat = read.csv(args$inputcat) # read in the catalogue
 
 if (refocusPSF){ # load the PSF focuses file (if available)
   if (file.exists(focusFilename)){
     dfFocii = read.csv(focusFilename)
   } else {
-    printf("WARNING: File does not exist '{focusFilename}'")
+    cat(paste0("WARNING: File does not exist '",focusFilename,"'\n"))
     refocusPSF = FALSE
   }
 }
 
-#foreach(idx=1:nrow(dfCat))%do%{ #for (idx in foundSources){
-for (idx in seq(1,nrow(dfCat))){
+#for (idx in seq(nrow(dfCat))){
+foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
   check=try({ # Catch any failed runs
-   
+  
+  startTime = Sys.time()
+  
   # The row index for this source
   sourceName = format(dfCat$UID[idx], scientific=FALSE)
-  printf("\n\n##################################################################################")
-  printf("## INFO: Running structural decomposition on {sourceName} ({idx}/{nrow(dfCat)}) ##")
-  printf("##################################################################################")
+  
+  if (logsToFile == TRUE){
+    cat(paste0("\n\n",sourceName," (",idx,"/",nrow(dfCat),")\n"))
+    logFile = paste0(logsDir,'/',sourceName,'_log.txt')
+    sink(logFile)
+  } else {
+    logFile = ''
+  }
+  
+  cat("\n\n#############################################################################\n")
+  cat(paste0("## INFO: Running structural decomposition on ",sourceName," (",idx,"/",nrow(dfCat),") ##\n"))
+  cat("#############################################################################\n")
 
   numExps = min(c(dfCat$num_exps[idx], maxExps))
   if (numExps == 0){
-    printf("INFO: No frames found for source: {sourceName}")
+    cat(paste0("INFO: No frames found for source: ",sourceName,"\n"))
     write(sourceName,file=badIDFilename,append=TRUE)
-    next
-  }
-  cat(glue("INFO: {dfCat$num_exps[idx]} exposures found (using {numExps}): \n\n"))
+  } else {
+  
+  cat(paste0("INFO: ",dfCat$num_exps[idx]," exposures found (using ",numExps,"): \n\n"))
   
   # Create output plot file if it does not already exist
   if (!file.exists(glue("{plotDir}/{sourceName}"))){
-    printf("INFO: Output directory did not exist, creating now.")
-    dir.create(glue("{plotDir}/{sourceName}"))
+    cat("INFO: Output directory did not exist, creating now.\n")
+    dir.create(paste0(plotDir,'/',sourceName))
   }
   
   ### Load each exposure's image & DQ map from the observation set
@@ -554,7 +585,7 @@ for (idx in seq(1,nrow(dfCat))){
   skyRMSList = list()
   
   for (jj in seq(1,numExps)){
-    expName = dfCat[[glue('name_exp{jj}')]][[idx]]
+    expName = dfCat[[paste0('name_exp',jj)]][[idx]]
     expNameList[[jj]] = expName
     obsetID = paste0( substr(toupper(expName), 1, 6), '010' )
     
@@ -570,19 +601,19 @@ for (idx in seq(1,nrow(dfCat))){
     } else if (substr(expName,1,3) == 'jbh'){
       proposalID = 'PID12328'
     } else {
-      printf("WARNING: No proposal ID could be found for exposure {expName}.")
+      cat(paste0("WARNING: No proposal ID could be found for exposure '",expName,"'\n"))
     }
     
     
     # The FITS extensions indices for the chip
-    expChip = dfCat[[glue('chip_exp{jj}')]][idx]
+    expChip = dfCat[[paste0('chip_exp',jj)]][idx]
     sciIndex = ifelse(expChip == 1, 2+3, 2) # The index in HST fits files that points to the science image HDU
     errIndex = ifelse(expChip == 1, 3+3, 3) # The index in HST fits files that points to the error HDU
     dqIndex = ifelse(expChip == 1, 4+3, 4) # The index in HST fits files that points to the data quality HDU
     
     # Load the image, data quality (dq) map and hdr objects
-    imgFilename = glue("{framesDir}/{proposalID}/{obsetID}/{expName}_flt.fits")
-    printf("\n\nINFO: Loading exposure #{jj} on chip {expChip}: {imgFilename}")
+    imgFilename = paste0(framesDir,"/",proposalID,"/",obsetID,"/",expName,"_flt.fits")
+    cat(paste0("\n\nINFO: Loading exposure #",jj," on chip ",expChip,": ",imgFilename,"\n"))
     hdulist = Rfits_read_all(imgFilename, pointer=FALSE, zap=c('LOOKUP','DP[1-2]'))
     
     img = hdulist[[sciIndex]] # this is an Rfits_image object
@@ -599,8 +630,10 @@ for (idx in seq(1,nrow(dfCat))){
     gainList[[jj]] = from_header(hdr = hdulist[[1]]$hdr, keys = 'CCDGAIN', as=as.numeric) # CCD gain from first extension header
     magzpList[[jj]] = -2.5*log10(fluxlambda/expTime) - 5*log10(pivotlambda) - 2.408 # instrumental zeropoint magnitudes in AB mags (from https://www.stsci.edu/hst/instrumentation/acs/data-analysis/zeropoints)
     
+    rm(hdulist)
+    
     # Now get cutouts and WCS-adjusted headers
-    printf("INFO: Source location in {expName}: {srcLocList[[jj]][1]}, {srcLocList[[jj]][2]}")
+    cat(paste0("INFO: Source location in ",expName,": ",srcLocList[[jj]][1],", ",srcLocList[[jj]][2],"\n"))
     imgCutList[[expName]] = img[srcLocList[[jj]][1], srcLocList[[jj]][2], box=cutoutBox]
     hdrCutList[[expName]] = imgCutList[[expName]]$hdr
     
@@ -613,7 +646,7 @@ for (idx in seq(1,nrow(dfCat))){
     skyGrid = profoundProFound(image=imgCutList[[expName]]$imDat, mask=maskList[[expName]], box=skyBoxDims, roughpedestal=TRUE)
     
     # Warp images and dqs onto a common WCS.
-    printf("INFO: Warping image and dq map to a common WCS")
+    cat(paste0("INFO: Warping image and dq map to a common WCS\n"))
     imgWarpList[[expName]] = Rwcs_warp(image_in=imgCutList[[jj]], header_out = imgCutList[[1]]$raw)
     skyList[[expName]] = Rwcs_warp(image_in=skyGrid$sky, header_in = imgCutList[[jj]]$raw, header_out = imgCutList[[1]]$raw)$imDat
     skyRMSList[[expName]] = Rwcs_warp(image_in=skyGrid$skyRMS, header_in = imgCutList[[jj]]$raw, header_out = imgCutList[[1]]$raw)$imDat
@@ -622,31 +655,33 @@ for (idx in seq(1,nrow(dfCat))){
     maskWarpList[[expName]][is.na(maskWarpList[[expName]])] = 1 # NAs produced by unoccupied regions in the warped mask should be converted to 1, i.e. masked
     
     # Load or Generate PSF
-    psfFilename = glue('{psfsDir}/{sourceName}_{expName}_psf.fits')
+    psfFilename = paste0(psfsDir,'/',sourceName,'_',expName,'_psf.fits')
     if (!file.exists(psfFilename) | clobberPSF==TRUE){
-      printf("INFO: Creating new PSF, saving to file '{psfFilename}'.")
+      cat(paste0("INFO: Creating new PSF, saving to file '",psfFilename,"'.\n"))
       focus = 0.0
       if (refocusPSF){
         sel = which.min(abs(expStart-dfFocii$MJD))
         if (abs(expStart - dfFocii$MJD[sel]) <= 0.125){ # Focus measurement must be within a MJD diff of 0.125 = 3 hours (i.e. ~2 HST orbits)
           focus = dfFocii$Focus[sel]
-          printf("INFO: Refocusing PSF by {focus} micrometers.")
+          cat(paste0("INFO: Refocusing PSF by ",focus," micrometers.\n"))
         } else {
-          printf("WARNING: Could not refocus PSF, closest focus measurement was {expStart - dfFocii$MJD[sel]} days from observation.")
+          cat(paste0("WARNING: Could not refocus PSF, closest focus measurement was ", expStart - dfFocii$MJD[sel], " days from observation.\n"))
         }
       }
       
       #>> Rscript Generate_HST_PSFs.R [dir] [name] [chip] [x] [y] [focus=0.0] [size=10.0] [filter=f814w] [spectrum=13]
-      print(glue("INFO: Running TinyTim with:\n>> Rscript {psfScriptPath} {psfsDir} {sourceName}_{expName} {expChip} {srcLocList[[jj]][1]} {srcLocList[[jj]][2]} {focus} {sizePSF}"))
+      cat(paste0("INFO: Running TinyTim with:\n>> Rscript ",psfScriptPath," ",psfsDir," ",sourceName,"_",expName," ",expChip," ",round(srcLocList[[jj]][1])," ",round(srcLocList[[jj]][2])," ",focus," ",sizePSF,"\n"))
+      sink()
       invisible(
-        system(glue("Rscript {psfScriptPath} {psfsDir} {sourceName}_{expName} {expChip} {srcLocList[[jj]][1]} {srcLocList[[jj]][2]} {focus} {sizePSF}"))
+        system(paste0("INFO: Running TinyTim with:\n>> Rscript ",psfScriptPath," ",psfsDir," ",sourceName,"_",expName," ",expChip," ",round(srcLocList[[jj]][1])," ",round(srcLocList[[jj]][2])," ",focus," ",sizePSF,"\n"))
       )
+      sink(logFile,append=TRUE)
     }
     
     psf = Rfits_read_image(psfFilename,ext=1)$imDat # read in the PSF file
     
     if (trimPSF == TRUE){ # Trim the PSF?
-      printf("INFO: Trimming PSF")
+      cat("INFO: Trimming PSF\n")
       dimsPSF = sizePSF/pixScaleHST
       peakPSF = which(psf==max(psf,na.rm=T) , arr.ind = T)
       psfList[[expName]] = psf[(peakPSF[1]-dimsPSF%/%2):(peakPSF[1]+dimsPSF%/%2), (peakPSF[2]-dimsPSF%/%2):(peakPSF[2]+dimsPSF%/%2)]
@@ -654,19 +689,19 @@ for (idx in seq(1,nrow(dfCat))){
       psfList[[expName]] = psf
     }
     
-    printf("INFO: Dimensions of {expName} PSF: {dim(psfList[[expName]])[1]} x {dim(psfList[[expName]])[2]}\n")
+    cat(paste0("INFO: Dimensions of ",expName," PSF: ",dim(psfList[[expName]])[1]," x ",dim(psfList[[expName]])[2],"\n"))
     
   }
   
-  printf("INFO: Exposure names:", end=' ')
+  cat("INFO: Exposure names:", end=' ')
   cat(names(imgCutList), end='\n')
-  printf("INFO: Length of images: {length(imgCutList)}")
-  printf("INFO: Length of dq: {length(dqCutList)}")
-  printf("INFO: Length of mask: {length(maskList)}")
-  printf("INFO: Length of PSF: {length(psfList)}")
+  cat(paste0("INFO: Length of images: ",length(imgCutList),"\n"))
+  cat(paste0("INFO: Length of dq: ",length(dqCutList),"\n"))
+  cat(paste0("INFO: Length of mask: ",length(maskList),"\n"))
+  cat(paste0("INFO: Length of PSF: ",length(psfList),"\n"))
   
   # Stack the images and masks
-  printf("INFO: Creating median stack of {length(imgCutList)} cutout images.")
+  cat(paste0("INFO: Creating median stack of ",length(imgCutList)," cutout images.\n"))
   imgCutStack = profoundMakeStack(image_list=lapply(imgWarpList, `[[`, 'imDat'), sky_list=skyList, skyRMS_list=skyRMSList, mask_list=maskWarpList, magzero_in = unlist(magzpList), masking='&')$image
   
   maskStack = maskList[[1]]
@@ -678,27 +713,28 @@ for (idx in seq(1,nrow(dfCat))){
   maskStack = apply(maskStack, c(1,2), as.integer)
   
   ### Run profoundProfound on the median stack of cutouts:
-  printf("INFO: Creating segmentation map for median stacked image.")
-  seg = profoundProFound(image=imgCutStack, mask=maskStack, sigma=1.25, size=9, skycut=0.9, SBdilate=2.5, tolerance=7, reltol=1.1, ext=5, redoskysize=55, plot=F)
+  cat("INFO: Creating segmentation map for median stacked image.\n")
+  seg = profoundProFound(image=imgCutStack, mask=maskStack, sigma=1.5, size=9, skycut=0.9, SBdilate=2.5, tolerance=7, reltol=0.3, ext=9, redoskysize=55, roughpedestal = T, plot=F)
   
   if (toPlot|toSave){
-    if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-segmentation_map.png"), width=650, height=650, pointsize=20)}
+    if (toSave){png(filename = paste0(plotDir,'/',sourceName,'/',sourceName,'-segmentation_map.png'), width=650, height=650, pointsize=20)}
     profoundSegimPlot(image=imgCutStack, segim=seg$segim, mask=maskStack)
     if (toSave){dev.off()}
   }
   
   ### Subtract sky
-  printf("INFO: Measuring sky statistics for each exposure and subtracting from cutout images.")
+  cat("INFO: Measuring sky statistics for each exposure and subtracting from cutout images.\n")
   segimList = list()
   imgList = list() # The sky subtracted image cutouts
+  hdrList = list()
   for (jj in seq(1,numExps)){
-    expName = dfCat[[glue('name_exp{jj}')]][idx]
+    expName = dfCat[[paste0('name_exp',jj)]][idx]
     
     segimList[[expName]] = apply(round(Rwcs_warp(image_in=seg$segim, header_in = imgCutList[[1]]$raw, header_out = imgCutList[[jj]]$raw, doscale = FALSE, interpolation='nearest')$imDat, digits=0), c(1,2), as.integer)
     segimList[[expName]] = profoundMakeSegimDilate(segim=segimList[[expName]],size=3)$segim # This dilation will catch any aliasing holes caused by warping integers maps onto different (typically rotated) grids
     segimList[[expName]][is.na(segimList[[expName]])] = 0
     
-    if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-{expNameList[jj]}_sky_statistics.png"), width=720, height=720, pointsize=16)}
+    if (toSave){png(filename = paste0(plotDir,'/',sourceName,'/',sourceName,'-',expNameList[jj],'_sky_statistics.png'), width=720, height=720, pointsize=16)}
     if (toPlot|toSave){par(mfrow=c(2,2), mar = c(1,1,1,1))}
     skyList[[expName]] = profoundProFound(image=imgCutList[[jj]]$imDat, segim=segimList[[expName]], mask=maskList[[jj]], magzero = magzpList[[jj]], gain=ccdGain, plot=FALSE,
                                           sigma=1.25, skycut=0.5, SBdilate=3, size=19, box=c(150,150))#skyBoxDims)
@@ -711,22 +747,23 @@ for (idx in seq(1,nrow(dfCat))){
     
     # Subtract sky
     imgList[[expName]] = imgCutList[[jj]]$imDat - skyList[[jj]]$sky
+    hdrList[[expName]] = imgCutList[[jj]]$raw
     
   }
   
   ## Save images of the image cutouts + overlaid segmentation and mask maps
   if (toPlot|toSave){
     if (numExps <= 4){
-      if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-cutouts.png"), width=900, height=900, pointsize=10)}
+      if (toSave){png(filename = paste0(plotDir,'/',sourceName,'/',sourceName,'_cutouts.png'), width=900, height=900, pointsize=10)}
       par(mfrow=c(2,2), mar = c(1.5,1.5,1.5,1.5), oma = c(0.25,0.25,0.25,0.25))
     } else if (numExps > 4 & numExps <= 8) {
-      if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-cutouts.png"), width=1800, height=900, pointsize=10)}
+      if (toSave){png(filename = paste0(plotDir,'/',sourceName,'/',sourceName,'_cutouts.png'), width=1800, height=900, pointsize=10)}
       par(mfrow=c(2,4), mar = c(1.5,1.5,1.5,1.5), oma = c(0.25,0.25,0.25,0.25))
     } else if (numExps > 8 & numExps <= 12){
-      if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-cutouts.png"), width=1800, height=900+450, pointsize=10)}
+      if (toSave){png(filename = paste0(plotDir,'/',sourceName,'/',sourceName,'_cutouts.png'), width=1800, height=900+450, pointsize=10)}
       par(mfrow=c(3,4), mar = c(1.5,1.5,1.5,1.5), oma = c(0.25,0.25,0.25,0.25))
     } else {
-      if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-cutouts.png"), width=1800, height=1800, pointsize=10)}
+      if (toSave){png(filename = paste0(plotDir,'/',sourceName,'/',sourceName,'_cutouts.png'), width=1800, height=1800, pointsize=10)}
       par(mfrow=c(4,4), mar = c(1.5,1.5,1.5,1.5), oma = c(0.25,0.25,0.25,0.25))
     }
     
@@ -738,7 +775,7 @@ for (idx in seq(1,nrow(dfCat))){
   }
   
   ### Calculate offsets and rotations between frames
-  printf("INFO: Calculating offsets/rotations between exposures.")
+  cat("INFO: Calculating offsets/rotations between exposures based on header information.\n")
   offsets = list() # The offsets are just the sub-pixel offsets between positions as the cutouts are already centered on the pixel positions.
   xrots = list() # rotations from the x-axis
   yrots = list() # rotations from the y-axis (!= xrots + 90, because HST images have skew)
@@ -760,12 +797,15 @@ for (idx in seq(1,nrow(dfCat))){
     
   }
   
-  
+  cat("INFO: Estimating WCS offsets between exposures.\n")
   segStatsList = list()
   segExpList = list()
   wcsOffsets = list()
-  if (toSave){png(filename = glue("{plotDir}/{sourceName}/{sourceName}-offsets.png"), width=3000, height=1500*(1+(numExps-1)%/%4), pointsize=16)}
-  if (toPlot|toSave){
+  maxDiffs = list(x=list(), y=list())
+  cenDiffs = list(x=list(), y=list())
+  
+  # if (toSave){CairoPNG(filename = paste0(plotDir,'/',sourceName,'/',sourceName,'_offsets.png'), width=3000, height=1500*(1+(numExps-1)%/%4), pointsize=20)}
+  if (toPlot){
     plotArr = matrix(seq(1,8), nrow = 2)
     if (numExps > 4){
       for (ii in seq((numExps-1)%/%4)){ # extra rows
@@ -775,7 +815,7 @@ for (idx in seq(1,nrow(dfCat))){
     layout(plotArr, widths = rep(1/4,4), heights=rep(1/2*(1+(numExps-1)%/%4),2*(1+(numExps-1)%/%4)))
   }
   
-  
+  # This code below is a bit janky, needs some polishing.
   for (jj in seq(1,numExps)){
     # Run profound to get segment statistics
     imgWarpList[[jj]]$imDat[is.nan(imgWarpList[[jj]]$imDat)] = NA
@@ -788,147 +828,188 @@ for (idx in seq(1,nrow(dfCat))){
       xmatch = coordmatch(segStatsList[[1]][,c("RAcen","Deccen")], segStatsList[[jj]][,c("RAcen","Deccen")], rad=0.1, radunit="asec")$bestmatch # 0.1 arcsec = 2 pixels
       
       inboth = c()
-      for (ii in seq_along(xmatch[,1])){
-        if (anyNA(imgWarpList[[1]]$imDat[segExpList[[1]]$segim == xmatch[ii,'refID']]) | anyNA(imgWarpList[[jj]]$imDat[segExpList[[jj]]$segim == xmatch[ii,'compareID']])){
-          inboth[ii] =  FALSE
-        } else {
-          inboth[ii] = TRUE
-        }
+      for (ii in seq_along(xmatch[,1])){ # check if the segment actually exists within each exposure
+        #if (anyNA(imgWarpList[[1]]$imDat[segExpList[[1]]$segim == xmatch[ii,'refID']]) | anyNA(imgWarpList[[jj]]$imDat[segExpList[[jj]]$segim == xmatch[ii,'compareID']])){
+        inboth[ii] = ifelse(!is.na(segStatsList[[1]][xmatch$refID[ii],'mag']) & !is.na(segStatsList[[jj]][xmatch$compareID[ii],'mag']), TRUE, FALSE)
       }
       
       tempseg[!tempseg %in% segStatsList[[jj]][xmatch[inboth,2],'segID']] = 0
       
-      xdiffs = segStatsList[[1]][xmatch[inboth,1],"xmax"] - segStatsList[[jj]][xmatch[inboth,2],"xmax"]
-      ydiffs = segStatsList[[1]][xmatch[inboth,1],"ymax"] - segStatsList[[jj]][xmatch[inboth,2],"ymax"]
-      magbin(xdiffs, ydiffs, xlim=c(-15,15), ylim=c(-15,15), step=1, dustlim=0, shape = 'sq')
+      maxDiffs$x[[jj]] = segStatsList[[jj]][xmatch[inboth,2],"xmax"] - segStatsList[[1]][xmatch[inboth,1],"xmax"]
+      maxDiffs$y[[jj]] = segStatsList[[jj]][xmatch[inboth,2],"ymax"] - segStatsList[[1]][xmatch[inboth,1],"ymax"]
+      cenDiffs$x[[jj]] = segStatsList[[jj]][xmatch[inboth,2],"xcen"] - segStatsList[[1]][xmatch[inboth,1],"xcen"]
+      cenDiffs$y[[jj]] = segStatsList[[jj]][xmatch[inboth,2],"ycen"] - segStatsList[[1]][xmatch[inboth,1],"ycen"]
       
-      points(x=offsets[[jj]][1], y=offsets[[jj]][2], pch=4, col='red', cex=2)
+      if (toPlot){
+        magbin(maxDiffs$x[[jj]], maxDiffs$y[[jj]], xlim=c(-15,15), ylim=c(-15,15), step=1, dustlim=0, xlab='x offset [pixels]', ylab='y offset [pixels]', cex.axis=1.5, cex.lab=1.5)
+        points(maxDiffs$x[[jj]], maxDiffs$y[[jj]], xlim=c(-15,15), ylim=c(-15,15), xlab='x offset [pixels]', ylab='y offset [pixels]', cex.axis=1.5, cex.lab=1.5)
+        points(x=offsets[[jj]][1], y=offsets[[jj]][2], pch=4, col='red', cex=2) 
+      }
       
-      dxwcs = median(xdiffs)
-      dywcs = median(ydiffs)
-      wcsOffsets[[jj]] = c(dxwcs, dywcs)
+      if (length(maxDiffs$x[[jj]][abs(maxDiffs$x[[jj]]) < 5]) >= 10 & length(maxDiffs$y[[jj]][abs(maxDiffs$y[[jj]]) < 5]) >= 10){ # Must have at least 10 points to calculate average offsets from
+        wcsOffsets[[jj]] = c(median(maxDiffs$x[[jj]][abs(maxDiffs$x[[jj]]) < 5]), median(maxDiffs$y[[jj]][abs(maxDiffs$y[[jj]]) < 5]))
+      } else {
+        wcsOffsets[[jj]] = c(0, 0)
+      }
       
-      points(x=dxwcs, y=dywcs, pch=3, col='magenta', cex=2)
-      printf("{expNameList[[jj]]}: x={dxwcs}, y={dywcs}")
+      cat(paste0("WCS offsets in ",expNameList[[jj]],": x=",wcsOffsets[[jj]][1],", y=",wcsOffsets[[jj]][2],"\n"))
       
-      profoundSegimPlot(image=imgWarpList[[jj]]$imDat, header=imgWarpList[[jj]]$raw, segim=tempseg, mask=maskWarpList[[1]] | maskWarpList[[jj]],
-                        sky=0, skyRMS = skyRMSList[[jj]], magzero=magzpList[[jj]], pixscale=pixScaleHST, boundstats = T)
-      
-      points(x=segStatsList[[jj]][xmatch[inboth,2],"xcen"], y=segStatsList[[jj]][xmatch[inboth,2],"ycen"], pch=3, col='magenta',cex=2)
-      points(x=segStatsList[[1]][xmatch[inboth,1],"xcen"], y=segStatsList[[jj]][xmatch[inboth,1],"ycen"], pch=4, col='yellow',cex=2)
+      if (toPlot){
+        points(x=wcsOffsets[[jj]][1], y=wcsOffsets[[jj]][2], pch=3, col='magenta', cex=2)
+        text(-15,15,as.character(dfCat[[paste0('name_exp',jj)]][idx]), adj=0, col='black', cex=1.5+0.5*(numExps-1)%/%4)
+        text(-15,13, paste0('dx = ',wcsOffsets[[jj]][1],'; dy = ',wcsOffsets[[jj]][2]), adj=0, col='black', cex=1.5+0.5*(numExps-1)%/%4)
+        
+        profoundSegimPlot(image=imgWarpList[[jj]]$imDat, header=imgWarpList[[jj]]$raw, segim=tempseg, mask=maskWarpList[[1]] | maskWarpList[[jj]],
+                          sky=0, skyRMS = skyRMSList[[jj]], magzero=magzpList[[jj]], pixscale=pixScaleHST, boundstats = T)
+        points(x=segStatsList[[jj]][xmatch[inboth,2],"xcen"], y=segStatsList[[jj]][xmatch[inboth,2],"ycen"], pch=3, col='magenta',cex=2)
+        points(x=segStatsList[[1]][xmatch[inboth,1],"xcen"], y=segStatsList[[jj]][xmatch[inboth,1],"ycen"], pch=4, col='yellow',cex=2)
+      }
       
     } else {
-      plot(x=offsets[[jj]][1], y=offsets[[jj]][2], pch=4, col='red', cex=2, xlim=c(-15,15), ylim=c(-15,15))
+      if (toPlot){
+        plot(x=offsets[[jj]][1], y=offsets[[jj]][2], pch=4, col='red', cex=2, xlim=c(-15,15), ylim=c(-15,15), xlab='x offset [pixels]', ylab='y offset [pixels]', cex.axis=1.75, cex.lab=1.75)
+        text(-15,15,as.character(dfCat[[paste0('name_exp',jj)]][idx]), adj=0, col='black', cex=1.5+0.5*(numExps-1)%/%4)
+        
+        profoundSegimPlot(image=imgWarpList[[jj]]$imDat, header=imgWarpList[[jj]]$raw, segim=tempseg, mask=maskWarpList[[1]] | maskWarpList[[jj]],
+                          sky=0, skyRMS = skyRMSList[[jj]], magzero=magzpList[[jj]], pixscale=pixScaleHST, boundstats = T)
+      }
       
-      profoundSegimPlot(image=imgWarpList[[jj]]$imDat, header=imgWarpList[[jj]]$raw, segim=tempseg, mask=maskWarpList[[1]] | maskWarpList[[jj]],
-                        sky=0, skyRMS = skyRMSList[[jj]], magzero=magzpList[[jj]], pixscale=pixScaleHST, boundstats = T)
-      
+      maxDiffs$x[[jj]] = NA
+      maxDiffs$y[[jj]] = NA
+      cenDiffs$x[[jj]] = NA
+      cenDiffs$y[[jj]] = NA
       wcsOffsets[[jj]] = c(0, 0)
     }
     
-    text(-15,15,as.character(dfCat[[glue('name_exp{jj}')]][idx]), adj=0, col='black', cex=1.25+0.5*(numExps-1)%/%4)
     
   }
   
-  if (toSave){dev.off()}
+  # if (toSave){dev.off()}
   
+  # ## Correct for minor WCS offsets if they exist
+  # for (jj in seq(1,numExps)){
+  #   offsets[[jj]][1] = offsets[[jj]][1] + wcsOffsets[[jj]][1]
+  #   offsets[[jj]][2] = offsets[[jj]][2] + wcsOffsets[[jj]][2]
+  # }
 
-  # ### Set up Found2Fit objects for each exposure
-  # printf("INFO: Generating found2Fits objects for each exposure cutout.")
-  # dataList = profuseMultiImageFound2Fit(image_list = imgList, psf_list = psfList, segim_list = segimList, mask_list = maskList, offset_list = offsets,
-  #                                         SBdilate=2.5, reltol=1.5, ext=5,
-  #                                         magzero=unlist(magzpList), gain = rep(ccdGain,numExps),
-  #                                         Ncomp=modelOpts$n_comps,
-  #                                         sing_nser_fit=modelOpts$sing_nser_fit,
-  #                                         disk_nser_fit=modelOpts$disk_nser_fit,  disk_nser=modelOpts$disk_nser,
-  #                                         bulge_nser_fit=modelOpts$bulge_nser_fit, bulge_nser=modelOpts$bulge_nser, bulge_circ=modelOpts$bulge_circ,
-  #                                         pos_delta = 10, # does this pos_delta value work for the biggest galaxies?
-  #                                         rough=roughFit, tightcrop = FALSE, deblend_extra=FALSE, fit_extra=FALSE, plot=toPlot)
-  # 
-  # 
-  # # Can I actually do this? - yes!
-  # for (jj in seq(1, numExps)){
-  #   names(dataList)[names(dataList) == glue("image{jj}")] = expNameList[jj]
-  # }
-  # 
-  # #profitLikeModel(dataList[[1]]$init,Data = dataList[[1]], makeplots = T, plotchisq = T)
-  # 
-  # printf("INFO: Running Highlander optimisation of model.")
-  # printf("Optim iters: {optimOpts$optim_iters}\nNiters: {optimOpts$Niters}\nNfinalMCMC: {optimOpts$NfinalMCMC}\n")
-  # # Change to profuseMultiImageDoFit(, ...)
-  # highFit = profuseMultiImageDoFit(image_list = imgList, dataList, ablim=1,
-  #                                  optim_iters=optimOpts$optim_iters, Niters=optimOpts$Niters, NfinalMCMC=optimOpts$NfinalMCMC,
-  #                                  CMAargs = optimOpts$CMA, LDargs = optimOpts$LD)
-  # 
-  # if (toPlot|toSave){
-  #   if (toSave) {png(filename=glue('{plotDir}/{sourceName}/{sourceName}_{modelName}_multifit-offset0.75.png'), width=(numExps+1)*300, height=1800, pointsize=20)}
-  #    multiImageMakePlots(datalist=dataList, imagestack=imgCutStack, segim=seg$segim, parm=highFit$parm, magzps = magzpList,
-  #                        plottext=glue("UID:\n{sourceName}\n\n # Exposures: {dataList$Nim}\n log(Mstar): {format(round(log10(dfCat[['StellarMass']][idx]), 2), nsmall = 2)}\n z: {format(round(dfCat[['zBest']][ii], 3), nsmall = 2)}"))
-  #   #if (toSave) {png(filename=glue('{plotDir}/{result$sourceName}/{result$sourceName}_{result$modelName}_multifit0.png'), width=(length(result$expNames)+1)*300, height=1800, pointsize=20)}
-  #   #multiImageMakePlots(datalist=result$dataList, imagestack=result$imgStack, segim=result$segimList[[1]], parm=result$highFit$parm, offset=offsets0, magzps = magzpList)
-  #   
-  #   if (toSave){dev.off()}
-  # }
-  # 
-  # 
-  # remakeModel = profitRemakeModellist(parm = highFit$parm, Data = dataList[[1]])
-  # optimModellist = remakeModel$modellist
-  # 
-  # ### Save plots of resulting model ###
-  # if(toSave & modelOpts$n_comps>1){ # fix to add fake bulge if single component chosen.
-  #   png(filename = glue("{plotDir}/{sourceName}/{sourceName}_{modelName}_radial_profile.png"), width=720, height=480, pointsize=16)
-  #   profitEllipsePlot(Data=dataList[[1]],modellist=optimModellist,pixscale=pixScaleHST,SBlim=25)
-  #   dev.off()
-  # }
-  # 
-  # ### Save outputs to .RDS file ###
-  # printf("INFO: Creating segmentation map for median stacked image.")
-  # outputs = list(args=args,
-  #                idx=idx,
-  #                row=dfCat[idx,],
-  #                modelName=modelName,
-  #                modelOptions=modelOpts,
-  #                optimOptions=optimOpts,
-  #                cutoutBox=cutoutBox,
-  #                skyBoxDims=skyBoxDims,
-  #                magzpList=magzpList,
-  #                sourceName=sourceName,
-  #                numimgs=length(expNameList),
-  #                expNames=expNameList,
-  #                imgList=imgList,
-  #                imgStack=imgCutStack,
-  #                dqList=dqCutList,
-  #                skyList=skyList,
-  #                hdrList=hdrCutList,
-  #                maskList=maskList,
-  #                psfList=psfList,
-  #                segimList=segimList,
-  #                offsets=offsets,
-  #                dataList=dataList,
-  #                highFit=highFit,
-  #                optimModellist=optimModellist)
-  # 
-  # dir.create(file.path(resultsDir, sourceName), showWarnings = FALSE) # Create output directory if one does not already exist
-  # outputFilename = glue('{resultsDir}/{sourceName}/{sourceName}_{modelName}_output.rds')
-  # saveRDS(object=outputs, file=outputFilename)
-  # 
-  }) # end try
+  ### Set up Found2Fit objects for each exposure
+  outputs = list(args=args,
+                 idx=idx,
+                 row=dfCat[idx,],
+                 models=args$models,
+                 optimOptions=optimOpts,
+                 cutoutBox=cutoutBox,
+                 skyBoxDims=skyBoxDims,
+                 magzpList=magzpList,
+                 sourceName=sourceName,
+                 numimgs=length(expNameList),
+                 expNames=expNameList,
+                 imgList=imgList,
+                 hdrList=hdrList,
+                 imgStack=imgCutStack,
+                 dqList=dqCutList,
+                 maskList=maskList,
+                 skyList=skyList,
+                 psfList=psfList,
+                 segimList=segimList,
+                 segStatsList=segStatsList,
+                 offsets=offsets,
+                 wcsOffsets=wcsOffsets,
+                 wcsDiffs=list(max=maxDiffs, cen=cenDiffs)
+                 )
+  
+  for (model in args$models){ #'single','psf-exp','deV-exp','psf-free','deV-free','free-exp','free-free'
+    modelOpts = get_model_opts(model)
+    cat(paste0("INFO: Optimising model: '",model,"', with options:\n"))
+    print(modelOpts)
+
+    cat("INFO: Generating found2Fits objects for each exposure cutout.\n")
+    dataList = profuseMultiImageFound2Fit(image_list = imgList, psf_list = psfList, segim_list = segimList, mask_list = maskList, offset_list = offsets,
+                                            SBdilate=2.5, reltol=1.5, ext=5,
+                                            magzero=unlist(magzpList), gain = rep(ccdGain,numExps),
+                                            Ncomp=modelOpts$n_comps,
+                                            sing_nser_fit=modelOpts$sing_nser_fit,
+                                            disk_nser_fit=modelOpts$disk_nser_fit,  disk_nser=modelOpts$disk_nser,
+                                            bulge_nser_fit=modelOpts$bulge_nser_fit, bulge_nser=modelOpts$bulge_nser, bulge_circ=modelOpts$bulge_circ,
+                                            pos_delta = 10, # does this pos_delta value work for the biggest galaxies?
+                                            rough=roughFit, tightcrop = TRUE, deblend_extra=FALSE, fit_extra=FALSE, plot=toPlot)
+
+
+    # Can I actually do this? - yes!
+    for (jj in seq(1, numExps)){
+      names(dataList)[names(dataList) == paste0("image",jj)] = expNameList[jj]
+    }
+
+    #profitLikeModel(dataList[[1]]$init,Data = dataList[[1]], makeplots = T, plotchisq = T)
+
+    cat(paste0("INFO: Running Highlander optimisation for model '",model,"'.\n"))
+    cat(paste0("Optim iters: ",optimOpts$optim_iters,"\nNiters: ",optimOpts$Niters,"\nNfinalMCMC: ",optimOpts$NfinalMCMC,"\n\n"))
+    highFit = profuseMultiImageDoFit(image_list = imgList, dataList, ablim=1,
+                                     optim_iters=optimOpts$optim_iters, Niters=optimOpts$Niters, NfinalMCMC=optimOpts$NfinalMCMC, 
+                                     CMAargs = optimOpts$CMA, LDargs = optimOpts$LD)
+
+    if (toPlot|toSave){
+      if (toSave) {CairoPNG(filename=paste0(plotDir,'/',sourceName,'/',sourceName,'_',model,'_multifit.png'), width=(numExps+1)*300, height=1800, pointsize=20)}
+       multiImageMakePlots(datalist=dataList, imagestack=imgCutStack, segim=seg$segim, parm=highFit$parm, magzps = magzpList,
+                           plottext=paste0("UID:\n",sourceName,"\n\n # Exposures: ",dataList$Nim,"\n log(Mstar): ",format(round(log10(dfCat[['StellarMass']][idx]), 2), nsmall = 2),"\n z: ",format(round(dfCat[['zBest']][ii], 3), nsmall = 2)))
+      # if (toSave) {CairoPNG(filename=glue('/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Tests/{result$sourceName}_{result$models[1]}_multifit0.png'), width=(length(result$expNames)+1)*300, height=1800, pointsize=20)}
+      # multiImageMakePlots(datalist=result$dataList$single, imagestack=result$imgStack, segim=result$segimList[[1]], parm=result$highFit$single$parm, offset=result$offsets, magzps = result$magzpList)
+
+      if (toSave){dev.off()}
+    }
+
+
+    remakeModel = profitRemakeModellist(parm = highFit$parm, Data = dataList[[1]])
+    optimModellist = remakeModel$modellist
+
+    ### Save plots of resulting model ###
+    if(toSave & modelOpts$n_comps>=2){ # fix to add fake bulge if single component chosen.
+      png(filename = paste0(plotDir,'/',sourceName,'/',sourceName,'_',model,'_radial_profile.png'), width=720, height=480, pointsize=16)
+      profitEllipsePlot(Data=dataList[[1]],modellist=optimModellist,pixscale=pixScaleHST,SBlim=25)
+      dev.off()
+    }
+
+    # Add model optimisation results to outputs list
+    outputs$dataList[[model]]=dataList
+    outputs$highFit[[model]]=highFit
+    outputs$modelOpts[[model]]=modelOpts
+    outputs$optimModellist[[model]]=optimModellist
+
+  } # END model loop
+  
+  endTime = Sys.time()
+  elapsedTime = (endTime - startTime)[[1]]
+  outputs$elapsedTime = elapsedTime
+  
+  ### Save outputs to .RDS file ###
+  dir.create(file.path(resultsDir, sourceName), showWarnings = FALSE) # Create output directory if one does not already exist
+  outputFilename = paste0(resultsDir,'/',sourceName,'/',sourceName,'_output.rds')
+  cat(paste0("INFO: Saving outputs to '",outputFilename,"'\n"))
+  saveRDS(object=outputs, file=outputFilename)
+  
+  } # END numexps condition
+  
+  }) # END trycatch
   if (class(check)=='try-error'){
-    printf("ERROR: source {sourceName} ({idx}) failed to be fit.")
+    endTime = Sys.time()
+    elapsedTime = (endTime - startTime)[[1]]
+    
+    cat(paste0("ERROR: source ",sourceName," (",idx,") failed to be fit after ",format(round(elapsedTime, 2), nsmall = 2)," minutes.\n"))
     write(sourceName,file=badIDFilename,append=TRUE)
     dev.off()
+    sink()
   } else {
-    printf("INFO: source {sourceName} ({idx}) successfully fit.")
+    cat(paste0("INFO: source ",sourceName," (",idx,") successfully fit after ",format(round(elapsedTime, 2), nsmall = 2)," minutes.\n"))
+    write(sourceName,file=goodIDFilename,append=TRUE)
+    sink()
   }
   
-} # end main galaxy for loop
+  
+} # END main galaxy loop
 
 
 ### Run in RStudio afterwards ###
 #result = readRDS('/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/ProFuse_Outputs/101505979732574752/101505979732574752_deV-exp_output.rds')
-
-### Running dead-Simple Queue
-# dSQ --job-file .../Jobs/[jobfile] --batch-file [path/batchfile-YYYY-MM-DD.sh] --job-name HSTdecomp_SS --output .../Jobs/Outputs/jobfile_%A_%a-%N.out --status-dir .../Jobs/Status/ --account=pawsey0160 --nodes=2 --time=24:00:00 --mem=64GB --mail-type=ALL --mail-user=robin.cook@uwa.edu.au
 
 ##### Model HST Galaxies Overview #####
 ### Find all sources that exist with this exposure ###
@@ -969,7 +1050,7 @@ for (idx in seq(1,nrow(dfCat))){
 # found2Fits0 = list()
 # for (jj in seq(1,numExps)){
 #   
-#   expName = dfCat[[glue('name_exp{jj}')]][idx]
+#   expName = dfCat[[paste0('name_exp',jj)]][idx]
 #   srcLoc = c(dfCat[[glue('x_exp{jj}')]][idx], dfCat[[glue('y_exp{jj}')]][idx]) # need to move this out of the loop and just use the first exposure's position as the location.
 #   
 #   
@@ -993,7 +1074,7 @@ for (idx in seq(1,nrow(dfCat))){
 #   found2Fits0[[jj]]$Data$usecalcregion = FALSE
 #   
 #   if(toPlot|toSave){
-#     text(0.1*cutoutBox[1],0.925*cutoutBox[2],as.character(dfCat[[glue('name_exp{jj}')]][idx]), adj=0, col='white', cex=1.75)
+#     text(0.1*cutoutBox[1],0.925*cutoutBox[2],as.character(dfCat[[paste0('name_exp',jj)]][idx]), adj=0, col='white', cex=1.75)
 #   }
 #   
 # }
@@ -1006,23 +1087,4 @@ for (idx in seq(1,nrow(dfCat))){
 # dataList0$mon.names = found2Fits0[[1]]$Data$mon.names
 # dataList0$parm.names = found2Fits0[[1]]$Data$parm.names
 # dataList0$N = found2Fits0[[1]]$Data$N
-
-
-## The oldest way of initiating the found2Fits
-### Produce the sigma map
-#skyMap = profoundProFound(imgCutList[[jj]], mask = maskList[[jj]], segim = seg$segim, size=5,
-#                          box = c(80,80), type='bicubic',
-#                          magzero=magZP, gain=ccdGain, #pixscale=pixScale, # header=header,
-#                          stats=TRUE, plot=FALSE)
-
-#sigma = profoundMakeSigma(imgCutList[[jj]],sky=skyMap$sky,skyRMS=skyMap$skyRMS,objects=seg$objects,mask=maskList[[jj]],gain=ccdGain,plot=FALSE)
-
-#found2Fits[[jj]] = profuseFound2Fit(imgCutList[[jj]], segim=seg$segim, sigma=sigma, psf=psfList[[jj]],
-#                                    magzero=magZP, gain = ccdGain, 
-#                                    Ncomp=n_comps,
-#                                    sing_nser_fit=sing_nser_fit,bulge_circ=bulge_circ,
-#                                    disk_nser_fit=disk_nser_fit,  disk_nser=disk_nser,
-#                                    bulge_nser_fit=bulge_nser_fit, bulge_nser=bulge_nser, bulge_circ=bulge_circ,
-#                                    pos_delta = 10, # does this pos_delta value work for the biggest galaxies?
-#                                    tightcrop = FALSE, deblend_extra=FALSE, fit_extra=FALSE, rough=roughFit, plot=toPlot)
 
