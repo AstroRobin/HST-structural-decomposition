@@ -6,9 +6,6 @@
 
 
 library(glue)
-library(Rfits)
-
-#.libPaths(c(libPath,.libPaths()))
 
 evalGlobal = TRUE
 
@@ -19,8 +16,8 @@ TinyTimACSR = function(input_dir, name, chip, x, y, filter, spectrum=13, size=3.
   
   psf_runfile <- paste(input_dir,'/',name,'_run',sep='')
   fileConn <- file(psf_runfile)
-  #writeLines(paste(tinyTimPath,"/tiny1 ",name,".param ", "ebmv=",exBmV," << EOF",sep=''), fileConn)
-  writeLines(glue('{tinyTimPath}/tiny1 {name}.param ebmv={exBmV} << EOF'), fileConn)
+  writeLines(paste(tinyTimPath,"/tiny1 ",name,".param ", "ebmv=",exBmV," << EOF",sep=''), fileConn)
+  #writeLines(glue('{tinyTimPath}/tiny1 {name}.param ebmv={exBmV} << EOF'), fileConn)
   close(fileConn)
   
   cat(15 ,'\n',file=psf_runfile,append=TRUE)      # camera: 15 -> ACS - Wide Field Channel 
@@ -37,21 +34,23 @@ TinyTimACSR = function(input_dir, name, chip, x, y, filter, spectrum=13, size=3.
   invisible(capture.output(system(paste('source ',input_dir,'/',name,'_run',sep=''))))
   Sys.sleep(1)
   
-  if (focus != 0){ ## Adjust focus if specified
-    fileConn = file(glue("{input_dir}/{name}.param"),open='r+')
-    parLines = readLines(fileConn)
-    focusLine = grep("*# Z4 = Focus for center of ACS/WFC field", parLines)
-    newFocus = as.numeric(strsplit(parLines[[focusLine]], '#')[[1]][1]) + focus
-    parLines[focusLine] = paste0(' ',format(newFocus, digits=4), '   # Z4 = Focus for center of ACS/WFC field')
-    writeLines(parLines, fileConn)
-    close(fileConn)
-    
-    Sys.sleep(1)
-  }
-  
+  # if (focus != 0){ ## Adjust focus if specified
+  #   fileConn = file(glue("{input_dir}/{name}.param"),open='r+')
+  #   parLines = readLines(fileConn)
+  #   focusLine = grep("*# Z4 = Focus for center of ACS/WFC field", parLines)
+  #   newFocus = as.numeric(strsplit(parLines[[focusLine]], '#')[[1]][1]) + focus
+  #   parLines[focusLine] = paste0(' ',format(newFocus, digits=4), '   # Z4 = Focus for center of ACS/WFC field')
+  #   writeLines(parLines, fileConn)
+  #   close(fileConn)
+  #   
+  #   
+  #   print(parLines)
+  #   Sys.sleep(1)
+  # }
+  # 
   
   invisible(capture.output(system(paste(tinyTimPath,'/tiny2 ',input_dir,'/',name,'.param',sep=''))))
-  Sys.sleep(5)
+  Sys.sleep(3)
   invisible(capture.output(system(paste(tinyTimPath,'/tiny3 ',input_dir,'/',name,'.param',sep=''))))
   
   Sys.sleep(1)
