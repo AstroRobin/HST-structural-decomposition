@@ -42,7 +42,7 @@ parser$add_argument("-n","--name",
 # Parse arguments and validate
 args = parser$parse_args()
 
-#args = list(inputcat = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Catalogues/Subcats/Pilot/DEVILS_HST_pilot_subcat_0.csv', models = 'single', computer = 'local', name = 'test')
+#args = list(inputcat = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Catalogues/Subcats/DEVILS_HST_alpha_sample.csv', models = 'single', computer = 'local', name = 'test')
 #args$inputcat = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Catalogues/Subcats/DEVILS_HST_pilot_sample_sorted.csv'
 
 
@@ -59,7 +59,6 @@ if (is.null(args$computer)){
 }
 
 cat(paste0(".libPaths(): ",.libPaths(),"\n"))
-sessionInfo()
 
 library(ProFound)
 library(ProFit)
@@ -81,6 +80,7 @@ library(doParallel) # Parallel backend for the foreach's %dopar% function
 library(glue)
 library(assertthat)
 
+sessionInfo()
 evalglobal = TRUE # Set global evaluate
 options(stringsAsFactors=FALSE) # adjust string problems
 options(scipen=999) # suppress scientific notation
@@ -223,6 +223,23 @@ get_model_opts = function(model){
 }
 
 
+adjust_nser_intervals = function(intervals, model){
+  
+  if (model == 'single'){ # Single component Sersic models (pure-disks and Ellipticals)
+    intervals[[1]]$nser = list(c(0.3, 10.0))
+  } else if (model %in% c('psfexp', 'psfser')){ # PSF + Sersic models
+    intervals[[2]]$nser = list(c(0.3, 10.0)) # disk
+  } else if (model %in% c('devexp', 'devser', 'serexp', 'serser')){ # Sersic + Sersic models
+    intervals[[1]]$nser[1] = list(c(0.3, 10.0)) # bulge
+    intervals[[1]]$nser[2] = list(c(0.3, 10.0)) # disk
+  } else {
+    cat(paste0("ERROR: Model name '",model,"' not recognised.\n"))
+  }
+  
+  return(intervals)
+}
+
+
 
 ##############################
 ### Define some parameters ###
@@ -252,14 +269,14 @@ if (args$computer == 'local'){
   
   framesDir = glue('{baseDir}/Data/Frames')
   psfsDir = glue('{baseDir}/Data/PSFs')
-  psfScriptPath = glue('{baseDir}/Generate_HST_PSFs.R') # If no PSF exists, make one using this script
+  psfScriptPath = glue('{baseDir}/Scripts/Generate_HST_PSFs.R') # If no PSF exists, make one using this script
   focusFilename = glue('{baseDir}/Data/HST-ACS_focus_lookup_RJM.csv')
   
-  resultsDir = glue('{baseDir}/Results/ProFuse_Outputs')
-  plotDir = glue('{baseDir}/Results/Plots')
+  resultsDir = glue('{baseDir}/Results/ProFuse_Outputs/{args$name}')
+  plotDir = glue('{baseDir}/Results/Plots/{args$name}')
   
-  badIDFilename = glue('{baseDir}/Results/Status/Failed_IDs_{args$name}_{date}.txt')
-  goodIDFilename = glue('{baseDir}/Results/Status/Successful_IDs_{args$name}_{date}.txt')
+  badIDFilename = glue('{baseDir}/Results/Status/{args$name}/Failed_IDs_{args$name}.txt')
+  goodIDFilename = glue('{baseDir}/Results/Status/{args$name}/Successful_IDs_{args$name}.txt')
   logsDir = glue('{baseDir}/Results/Logs/{args$name}')
   
   source('{baseDir}/Scripts/Model_plots.R')
@@ -280,7 +297,7 @@ if (! file.exists(args$inputcat)){
   stop(paste0("ERROR: The input catalogue '",args$inputcat,"' does not exist."))
 }
 
-pids = c('PID09822', 'PID10092', 'PID12440')
+#pids = c('PID09822', 'PID10092', 'PID12440')
 
 pixScaleHST = 0.05 # The pixel scale of HST ACS non-rotated and raw .flt exposure frames.
 ccdGain = 1
@@ -305,7 +322,7 @@ logsToFile = FALSE # Whether print statements should be sent to separate files (
 ### Select Optimisation Parameters ###
 ######################################
 
-optimOpts = list(optim_iters=5, Niters=c(200,200), NfinalMCMC=500, walltime=7.5*60) # max walltime of 7.5 hours
+optimOpts = list(optim_iters=5, Niters=c(200,200), NfinalMCMC=500, walltime=6*60) # max walltime of 6 hours
 #optimOpts = list(optim_iters=3, Niters=c(100,100), NfinalMCMC=300, walltime=7.5*60)
 optimOpts$CMA = list(control=list(maxit=optimOpts$Niters[1]))
 optimOpts$LD = list(control=list(abstol=0.1), Iterations = optimOpts$Niters[2], Status=50, Algorithm = 'CHARM', Thinning = 1, Specs=list(alpha.star=0.44))
@@ -325,6 +342,7 @@ if (refocusPSF){ # load the PSF focuses file (if available)
     refocusPSF = FALSE
   }
 }
+
 
 #for (idx in seq(nrow(dfCat))){
 foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
@@ -346,11 +364,11 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
     cat("\n\n#############################################################################\n")
     cat(paste0("## INFO: Running structural decomposition on ",sourceName," (",idx,"/",nrow(dfCat),") ##\n"))
     cat("#############################################################################\n")
+    cat(paste0("INFO: SLURM_ARRAY_TASK_ID = '", Sys.getenv('SLURM_ARRAY_TASK_ID'), "'\n"))
     
     numExps = min(c(dfCat$num_exps[idx], maxExps))
     if (numExps == 0){
       cat(paste0("INFO: No frames found for source: ",sourceName,"\n"))
-      write(sourceName,file=badIDFilename,append=TRUE)
     } else {
       
       cat(paste0("INFO: ",dfCat$num_exps[idx]," exposures found (using ",numExps,"): \n\n"))
@@ -587,7 +605,6 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         xrots[[jj]] = rad2deg(atan2(-cdsign*cds[2], cds[1]))
         yrots[[jj]] = rad2deg(atan2(cdsign*cds[3], cds[4]))
         
-        #offsets[[jj]] = c(dfCat[[glue('x_exp{jj}')]][idx]%%1 - dfCat[['x_exp1']][idx]%%1, dfCat[[glue('y_exp{jj}')]][idx]%%1 - dfCat[['y_exp1']][idx]%%1, yrots[[jj]] - yrot1)
         offsets[[jj]] = c(srcLocList[[jj]][1]%%1 - srcLocList[[1]][1]%%1, srcLocList[[jj]][2]%%1 - srcLocList[[1]][2]%%1, yrots[[jj]] - yrot1)
         
       }
@@ -733,7 +750,10 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         # Rename F2F objects according to their exposure name
         for (jj in seq(1, numExps)){
           names(dataList)[names(dataList) == paste0("image",jj)] = expNameList[jj]
+          dataList[[jj]]$intervals = set_model_intervals(model, intervals=dataList[[jj]]$intervals) # change Sersic index intervals
         }
+        
+        
         
         cat(paste0("INFO: Running Highlander optimisation for model '",model,"'.\n"))
         cat(paste0("Optim iters: ",optimOpts$optim_iters,"\nNiters: ",optimOpts$Niters,"\nNfinalMCMC: ",optimOpts$NfinalMCMC,"\nwalltime: ",optimOpts$walltime,"\n\n"))
@@ -758,7 +778,7 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         optimModellist = remakeModel$modellist
         
         ### Save plots of resulting model ###
-        if(toSave & modelOpts$n_comps>=2){ # fix to add fake bulge if single component chosen.
+        if (toSave & modelOpts$n_comps>=2){ # fix to add fake bulge if single component chosen.
           png(filename = paste0(plotDir,'/',sourceName,'/D',sourceName,'_',model,'_radial_profile.png'), width=720, height=480, pointsize=16)
           profitEllipsePlot(Data=dataList[[1]], modellist=optimModellist, pixscale=pixScaleHST, SBlim=25, fwhm=0.1) # 0.1 arcsec is the typical HST ACS PSF width at F814W from the COSMOS Survey 
           dev.off()
@@ -790,13 +810,13 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
     elapsedTime = (endTime - startTime)[[1]]
     
     cat(paste0("ERROR: source ",sourceName," (",idx,") failed to be fit after ",format(round(elapsedTime, 2), nsmall = 2)," minutes.\n"))
-    write(sourceName,file=badIDFilename,append=TRUE)
+    write(paste0(format(Sys.time(), "%Y-%m-%d %X"), ', ', sourceName), file=badIDFilename, append=TRUE)
     dev.off()
     if (logsToFile) {sink()}
   } else {
     cat(paste0("INFO: source ",sourceName," (",idx,") successfully fit after ",format(round(elapsedTime, 2), nsmall = 2)," minutes.\n"))
     if (logsToFile) {sink()}
-    write(sourceName,file=goodIDFilename,append=TRUE)
+    write(paste0(format(Sys.time(), "%Y-%m-%d %X"), ', ', sourceName), file=goodIDFilename, append=TRUE)
   }
   
   
@@ -813,73 +833,32 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
 
 ### Load data for each of the N exposures ###
 # Load image
-# Load dqmask
-# Load PSF
+# Load DQ mask
+# Create initial sky map
+# Warp image, DQ mask and sky stats onto common WCS projection
+# Load/Generate PSF
+#   Apply R. J. Massey PSF Focus correction if possible
+#   Trim PSF to remove padding
+
+### Stack images
+# Inverse variance weight combine each of the warped images
+
+### Create segmentation map ###
+# Run ProFound() with conservative detection on stacked image
+# Dilate and stitch segmentation map if needed
+# Unwarp segmentation map to each exposure's WCS projection
 
 ### Create sky map ###
 # Run ProFound() w/ fairly relaxed parameters
-# Subtract sky from image
-
-### Create segmentation map ###
-# Run ProFound() with conservative detection
-# Dilate and Stitch segmentation map
+# Subtract sky from each exposure image
 
 ### Set up ProFuse fit ###
 # Set up model choice (e.g. Ncomp, bulge_circ, disk_nser, etc.)
-# Get 4x Found-to-Fits (FtoF) by running profuseFound2Fit( ) or profuseDoFit( )
-# Set FtoF_{2-4}$Data$offset c(hdr{2-4}['CRPIX1']-hdr1['CRPIX1'], hdr{2-4}['CRPIX2']-hdr1['CRPIX2'])
+# Get Nx Found-to-Fits (FtoF) by running profuseMultiImageFound2Fit( )
+# Set FtoF_{2-4}$Data$offset based of sub-pixel differences of x/y source positions
 # Also set rotations
 # Combine datalists using: Datalists = c(list(FtoF_1$Data), list(FtoF_2$Data), list(FtoF_3$Data), list(FtoF_4$Data))
 
 ### Run Highlander Optimisation ###
-# initiate Highlander Fit with 2 iterations each of CMA and LaplacesDemon.
+# initiate Highlander Fit with 2 iterations each of CMA and LaplacesDemon, to be run 5 times.
 # Complete MCMC optimisation with a longer MCMC run to get sufficient posteriors for parameters.
-
-### OLD CODE ###
-## The old way of running Highlander
-# highFit = Highlander(found2Fits[[1]]$Data$init, Data=dataList, likefunc=profitLikeModel, ablim=1, 
-#                      optim_iters=optimOpts$optim_iters, Niters=optimOpts$Niters, NfinalMCMC=optimOpts$NfinalMCMC,
-#                      CMAargs = optimOpts$CMA, LDargs = optimOpts$LD)
-
-## The old way of initiating the found2Fits (without using profuseMultiImageFound2Fits)
-# found2Fits0 = list()
-# for (jj in seq(1,numExps)){
-#   
-#   expName = dfCat[[paste0('name_exp',jj)]][idx]
-#   srcLoc = c(dfCat[[glue('x_exp{jj}')]][idx], dfCat[[glue('y_exp{jj}')]][idx]) # need to move this out of the loop and just use the first exposure's position as the location.
-#   
-#   
-#   
-#   found2Fits0[[jj]] = profuseFound2Fit(imgCutList[[expName]], psf=psfList[[expName]], segim = seg$segim, mask=maskList[[expName]],
-#                                        SBdilate=2.5,reltol=1.5,ext=5,
-#                                        magzero=magZP, gain = ccdGain, 
-#                                        Ncomp=modelOpts$n_comps,
-#                                        sing_nser_fit=modelOpts$sing_nser_fit,
-#                                        disk_nser_fit=modelOpts$disk_nser_fit,  disk_nser=modelOpts$disk_nser,
-#                                        bulge_nser_fit=modelOpts$bulge_nser_fit, bulge_nser=modelOpts$bulge_nser, bulge_circ=modelOpts$bulge_circ,
-#                                        pos_delta = 10, # does this pos_delta value work for the biggest galaxies?
-#                                        rough=roughFit, tightcrop = FALSE, deblend_extra=FALSE, fit_extra=FALSE, plot=toPlot|toSave)
-#   
-#   if (jj > 1){# Offsets calculated as the difference between the x/y values listed in the data frame.
-#     found2Fits0[[jj]]$Data$offset = c(dfCat[[glue('x_exp{jj}')]][idx]%%1 - dfCat[['x_exp1']][idx]%%1, # just the sub-pixel offsets need to be set as cutouts have been made centered on the pixel positions.
-#                                       dfCat[[glue('y_exp{jj}')]][idx]%%1 - dfCat[['y_exp1']][idx]%%1)
-#   }
-#   
-#   # Need to extend model beyond calc region
-#   found2Fits0[[jj]]$Data$usecalcregion = FALSE
-#   
-#   if(toPlot|toSave){
-#     text(0.1*cutoutBox[1],0.925*cutoutBox[2],as.character(dfCat[[paste0('name_exp',jj)]][idx]), adj=0, col='white', cex=1.75)
-#   }
-#   
-# }
-# 
-# if(toSave){dev.off()}
-# 
-# dataList0 = lapply(found2Fits0, `[[`, 'Data') # For each `found2Fits` instance, pull out the `Data` object
-# 
-# # Set additional parameters to the Data list for fitting multiple images.
-# dataList0$mon.names = found2Fits0[[1]]$Data$mon.names
-# dataList0$parm.names = found2Fits0[[1]]$Data$parm.names
-# dataList0$N = found2Fits0[[1]]$Data$N
-
