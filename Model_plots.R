@@ -42,26 +42,28 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magz
   contlw = 3
   maxsigma = 5
   
+  nexps = sum(!grepl('mon.names|parm.names|N|Nim', names(datalist)))
   ndofs = ifelse(missing(dofs), 0, length(dofs)) # degrees of freedom
   if(ndofs>0) stopifnot(length(dofs) <= 2)
   
   parmar = c(1, 1, 0.5, 0.5)
   parmgp = c(3, 0.2, 0)
-  par(mar=parmar, oma=c(1,1,1,1))
+  par(mar=parmar, oma=c(2,1,1,1))
   
   # Create the plotting layout
-  nrows = 3
-  ncols = datalist$Nim + 1
+  ncols = nexps + 1
   if (ncols > 3){
+    nrows = 3
     plotArr = rbind( array(c(seq(1, ncols*2), 0, ncols*2+1), dim=c(2, ncols+1)), c(seq(ncols*2+2, ncols*2 + ncols + 2)) )
   } else if (ncols == 3){
+    nrows = 4
     plotArr = rbind( array(c(seq(1, ncols*2), 0, ncols*2+1), dim=c(2, ncols+1)), c(seq(ncols*2+2, ncols*2+ncols), 0, 0), c(seq(ncols*2+ncols+1, ncols*2+ncols+2), 0, 0) )
   } else {
+    nrows = 4
     plotArr = rbind( array(c(seq(1, ncols*2), 0, ncols*2+1), dim=c(2, ncols+1)), c(seq(ncols*2+2, ncols*2+ncols+1), 0), c(seq(ncols*2+ncols+2, ncols*2+ncols+3), 0) )
   }
   
-  
-  layout(plotArr, widths=c(rep((1-0.05)/ncols, ncols), 0.05), heights=rep(1/nrows, nrows))
+  layout(plotArr, widths=c(rep(1/(ncols+0.2), ncols), 0.2/(ncols+0.2)), heights=rep(1/nrows, nrows))
   
   ## Segmentation map plot
   if (missing(segim)){
@@ -77,14 +79,14 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magz
   
   if (missing(offsets)){
     offsets = list()
-    for (ii in seq(datalist$Nim)){
+    for (ii in seq(nexps)){
       offsets[[ii]] = datalist[[ii]]$offset
     }
   }
   
   toterror = c() # the total error accumulated across all pixels in all exposures
   
-  for (ii in seq(1,datalist$Nim)){ # loop over all exposures
+  for (ii in seq(1, nexps)){ # loop over all exposures
     image = datalist[[ii]]$image
     region = datalist[[ii]]$region
     sigma = datalist[[ii]]$sigma
@@ -208,7 +210,7 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magz
   tdof=2*vardata/(vardata-1)
   tdof=LaplacesDemon::interval(tdof,0,Inf)
   
-  magplot(x[1:(length(x)-1)]+dx, y, xlim=xlims, ylim=ylims, xlab="", ylab="", xaxs="i", type="s", log="y", mgp=parmgp)
+  magplot(x[1:(length(x)-1)]+dx, y, xlim=xlims, ylim=ylims, xlab=expression(chi), ylab="", xaxs="i", type="s", log="y", mgp=parmgp)
   lines(x, dnorm(x), col="blue", xaxs="i")
   lines(x, dt(x,tdof), col="red", xaxs="i")
   
@@ -231,7 +233,7 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magz
   ylims = c(min(y[y>0]),10)
   y[y<=0] = ylims[1]/10
   
-  magplot(x[1:(length(x)-1)]+dx, y, xlim=xlims, ylim=ylims, xlab="", ylab="", xaxs="i", type="s", log="y", mgp=parmgp)
+  magplot(x[1:(length(x)-1)]+dx, y, xlim=xlims, ylim=ylims, xlab=expression(log10(chi^2)), ylab="", xaxs="i", type="s", log="y", mgp=parmgp)
   xp=10^x
   lines(x, dchisq(xp,1), col="blue", xaxs="i")
   labs = c(bquote(chi^2),expression(chi^2*(1)))

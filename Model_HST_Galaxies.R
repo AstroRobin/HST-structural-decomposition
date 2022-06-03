@@ -768,8 +768,9 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
                                          CMAargs = optimOpts$CMA, LDargs = optimOpts$LD)
         
         if (toPlot|toSave){
-          if (toSave) {CairoPNG(filename=paste0(plotDir,'/',sourceName,'/D',sourceName,'_',model,'_multifit.png'), width=(numExps+1)*325+60, height=1000, pointsize=20)}
-          multiImageMakePlots(datalist=dataList, imagestack=imgCutStack, segim=seg$segim, parm=highFit$parm, magzps = magzpList,
+          nPlot = numExps # Number of exposures to plot
+          if (toSave) {CairoPNG(filename=paste0(plotDir,'/',sourceName,'/D',sourceName,'_',model,'_multifit.png'), width=(nPlot+1)*325+60, height=1000, pointsize=20)}
+          multiImageMakePlots(datalist=dataList[1:nPlot], imagestack=imgCutStack, segim=seg$segim, parm=highFit$parm, magzps = magzpList,
                               plottext=paste0("UID:\n",sourceName,"\n\n # Exposures: ",dataList$Nim,"\n log(Mstar): ",format(round(log10(dfCat[['StellarMass']][idx]), 2), nsmall = 2),"\n z: ",format(round(dfCat[['zBest']][ii], 3), nsmall = 2)))
           # modelnum = 2
           # if (toSave) {CairoPNG(filename=paste0('/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Tests/D',result$sourceName,'_',result$models[modelnum],'_multifit.png'), width=(length(result$expNames)+1)*325+50, height=1000, pointsize=20)}
@@ -785,7 +786,7 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         
         ### Save plots of resulting model ###
         if (toSave & modelOpts$n_comps>=2){ # fix to add fake bulge if single component chosen.
-          png(filename = paste0(plotDir,'/',sourceName,'/D',sourceName,'_',model,'_radial_profile.png'), width=720, height=480, pointsize=16)
+          CairoPNG(filename = paste0(plotDir,'/',sourceName,'/D',sourceName,'_',model,'_radial_profile.png'), width=720, height=480, pointsize=16)
           profitEllipsePlot(Data=dataList[[1]], modellist=optimModellist, pixscale=pixScaleHST, SBlim=25, FWHM=0.1) # 0.1 arcsec is the typical HST ACS PSF width at F814W from the COSMOS Survey 
           dev.off()
         }
