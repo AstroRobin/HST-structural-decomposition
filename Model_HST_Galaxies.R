@@ -24,6 +24,8 @@
 ### Get arguments from command-line ###
 #######################################
 
+.libPaths(c("/group/pawsey0160/software/sles12sp3/apps/sandybridge/gcc/4.8.5/r/3.6.3/lib64/R/library",.libPaths()))
+
 library(argparse)
 parser = ArgumentParser()
 parser$add_argument("-i","--inputcat",required=TRUE,
@@ -43,7 +45,7 @@ parser$add_argument("-n","--name",
 args = parser$parse_args()
 
 #args = list(inputcat = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Catalogues/Subcats/DEVILS_HST_alpha_sample.csv', models = 'single', computer = 'local', name = 'test')
-#args$inputcat = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Catalogues/Subcats/DEVILS_HST_pilot_sample_sorted.csv'
+#args$inputcat = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Catalogues/DEVILS_HST-ACS_exposure_positions.csv'
 
 
 if (is.null(args$computer)){
@@ -226,12 +228,12 @@ get_model_opts = function(model){
 adjust_nser_intervals = function(intervals, model){
   
   if (model == 'single'){ # Single component Sersic models (pure-disks and Ellipticals)
-    intervals[[1]]$nser = list(c(0.3, 10.0))
+    intervals[[1]]$nser = list(c(0.25, 10.0))
   } else if (model %in% c('psfexp', 'psfser')){ # PSF + Sersic models
-    intervals[[2]]$nser = list(c(0.3, 10.0)) # disk
+    intervals[[2]]$nser = list(c(0.25, 10.0)) # disk
   } else if (model %in% c('devexp', 'devser', 'serexp', 'serser')){ # Sersic + Sersic models
-    intervals[[1]]$nser[1] = list(c(0.3, 10.0)) # bulge
-    intervals[[1]]$nser[2] = list(c(0.3, 10.0)) # disk
+    intervals[[1]]$nser[1] = list(c(0.25, 10.0)) # bulge
+    intervals[[1]]$nser[2] = list(c(0.25, 10.0)) # disk
   } else {
     cat(paste0("ERROR: Model name '",model,"' not recognised.\n"))
   }
@@ -279,7 +281,7 @@ if (args$computer == 'local'){
   goodIDFilename = glue('{baseDir}/Results/Status/{args$name}/Successful_IDs_{args$name}.txt')
   logsDir = glue('{baseDir}/Results/Logs/{args$name}')
   
-  source('{baseDir}/Scripts/Model_plots.R')
+  source(glue('{baseDir}/Scripts/Model_plots.R'))
   
 }
 
@@ -316,13 +318,13 @@ roughFit = FALSE
 
 toPlot = FALSE #TRUE # Whether to show plots
 toSave = TRUE # Whether to save plots
-logsToFile = FALSE # Whether print statements should be sent to separate files (good when running parallel computing)
+logsToFile = TRUE # Whether print statements should be sent to separate files (good when running parallel computing)
 
 ######################################
 ### Select Optimisation Parameters ###
 ######################################
 
-optimOpts = list(optim_iters=5, Niters=c(200,200), NfinalMCMC=500, walltime=6*60) # max walltime of 6 hours
+optimOpts = list(optim_iters=5, Niters=c(200,200), NfinalMCMC=500, walltime=9*60) # max walltime of 9 hours
 #optimOpts = list(optim_iters=3, Niters=c(100,100), NfinalMCMC=300, walltime=7.5*60)
 optimOpts$CMA = list(control=list(maxit=optimOpts$Niters[1]))
 optimOpts$LD = list(control=list(abstol=0.1), Iterations = optimOpts$Niters[2], Status=50, Algorithm = 'CHARM', Thinning = 1, Specs=list(alpha.star=0.44))
@@ -374,7 +376,7 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
       cat(paste0("INFO: ",dfCat$num_exps[idx]," exposures found (using ",numExps,"): \n\n"))
       
       # Create output plot file if it does not already exist
-      if (!file.exists(glue("{plotDir}/{sourceName}"))){
+      if (!file.exists(paste0(plotDir,'/',sourceName))){
         cat("INFO: Output directory did not exist, creating now.\n")
         dir.create(paste0(plotDir,'/',sourceName))
       }
@@ -400,7 +402,6 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
       for (jj in seq(1,numExps)){
         expName = dfCat[[paste0('name_exp',jj)]][[idx]]
         expNameList[[jj]] = expName
-        obsetID = paste0( substr(toupper(expName), 1, 6), '010' )
         
         # Establish which proposal ID this exposure came from.
         if (substr(expName,1,3) == 'j8p'){
@@ -417,6 +418,12 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
           cat(paste0("WARNING: No proposal ID could be found for exposure '",expName,"'\n"))
         }
         
+        # Get the observation set ID for the association
+        if (proposalID %in% c('PID09822', 'PID10092', 'PID12328', 'PID12461', 'PID13641')){
+          obsetID = paste0( substr(toupper(expName), 1, 6), '010' )
+        } else {
+          obsetID = paste0( substr(toupper(expName), 1, 6), '020' )
+        }
         
         # The FITS extensions indices for the chip
         expChip = dfCat[[paste0('chip_exp',jj)]][idx]
@@ -542,7 +549,7 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
       hdrList = list()
       for (jj in seq(1,numExps)){
         expName = dfCat[[paste0('name_exp',jj)]][idx]
-        
+      
         segimList[[expName]] = apply(round(Rwcs_warp(image_in=seg$segim, header_in = imgCutList[[1]]$raw, header_out = imgCutList[[jj]]$raw, doscale = FALSE, interpolation='nearest')$imDat, digits=0), c(1,2), as.integer)
         segimList[[expName]] = profoundMakeSegimDilate(segim=segimList[[expName]],size=3)$segim # This dilation will catch any aliasing holes caused by warping integers maps onto different (typically rotated) grids
         segimList[[expName]][is.na(segimList[[expName]])] = 0
@@ -730,7 +737,7 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
                      wcsDiffs=list(max=maxDiffs, cen=cenDiffs)
       )
       
-      for (model in args$models){ #'single','psf-exp','deV-exp','psf-free','deV-free','free-exp','free-free'
+      for (model in args$models){ #'single','psfexp','devexp','psfser','devser','serexp','serser'
         modelOpts = get_model_opts(model)
         cat(paste0("INFO: Optimising model: '",model,"', with options:\n"))
         print(modelOpts)
@@ -750,14 +757,13 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         # Rename F2F objects according to their exposure name
         for (jj in seq(1, numExps)){
           names(dataList)[names(dataList) == paste0("image",jj)] = expNameList[jj]
-          dataList[[jj]]$intervals = set_model_intervals(model, intervals=dataList[[jj]]$intervals) # change Sersic index intervals
+          dataList[[jj]]$intervals = adjust_nser_intervals(model, intervals=dataList[[jj]]$intervals) # change Sersic index intervals
         }
-        
         
         
         cat(paste0("INFO: Running Highlander optimisation for model '",model,"'.\n"))
         cat(paste0("Optim iters: ",optimOpts$optim_iters,"\nNiters: ",optimOpts$Niters,"\nNfinalMCMC: ",optimOpts$NfinalMCMC,"\nwalltime: ",optimOpts$walltime,"\n\n"))
-        highFit = profuseMultiImageDoFit(image_list = imgList, dataList, ablim=1,
+        highFit = profuseMultiImageDoFit(image_list = imgList, dataList, ablim=1, keepall=TRUE,
                                          optim_iters=optimOpts$optim_iters, Niters=optimOpts$Niters, NfinalMCMC=optimOpts$NfinalMCMC, walltime=optimOpts$walltime, 
                                          CMAargs = optimOpts$CMA, LDargs = optimOpts$LD)
         
@@ -780,7 +786,7 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         ### Save plots of resulting model ###
         if (toSave & modelOpts$n_comps>=2){ # fix to add fake bulge if single component chosen.
           png(filename = paste0(plotDir,'/',sourceName,'/D',sourceName,'_',model,'_radial_profile.png'), width=720, height=480, pointsize=16)
-          profitEllipsePlot(Data=dataList[[1]], modellist=optimModellist, pixscale=pixScaleHST, SBlim=25, fwhm=0.1) # 0.1 arcsec is the typical HST ACS PSF width at F814W from the COSMOS Survey 
+          profitEllipsePlot(Data=dataList[[1]], modellist=optimModellist, pixscale=pixScaleHST, SBlim=25, FWHM=0.1) # 0.1 arcsec is the typical HST ACS PSF width at F814W from the COSMOS Survey 
           dev.off()
         }
         
@@ -809,12 +815,12 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
     endTime = Sys.time()
     elapsedTime = (endTime - startTime)[[1]]
     
-    cat(paste0("ERROR: source ",sourceName," (",idx,") failed to be fit after ",format(round(elapsedTime, 2), nsmall = 2)," minutes.\n"))
-    write(paste0(format(Sys.time(), "%Y-%m-%d %X"), ', ', sourceName), file=badIDFilename, append=TRUE)
+    cat(paste0("ERROR: source ",sourceName," (",idx,") failed to be fit after ",format(round(elapsedTime, 2), nsmall = 2)," hours.\n"))
+    write(paste0(format(Sys.time(), "%Y-%m-%d %X"), ', ',Sys.getenv('SLURM_ARRAY_TASK_ID'), ', ', sourceName), file=badIDFilename, append=TRUE)
     dev.off()
     if (logsToFile) {sink()}
   } else {
-    cat(paste0("INFO: source ",sourceName," (",idx,") successfully fit after ",format(round(elapsedTime, 2), nsmall = 2)," minutes.\n"))
+    cat(paste0("INFO: source ",sourceName," (",idx,") successfully fit after ",format(round(elapsedTime, 2), nsmall = 2)," hours.\n"))
     if (logsToFile) {sink()}
     write(paste0(format(Sys.time(), "%Y-%m-%d %X"), ', ', sourceName), file=goodIDFilename, append=TRUE)
   }
