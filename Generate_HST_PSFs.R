@@ -6,13 +6,18 @@
 
 evalGlobal = TRUE
 
-TinyTimACSR = function(input_dir, name, chip, x, y, filter, spectrum=13, size=3.0, focus=0, exBmV=0, jitter=0){
-  #tinyTimPath = '/Users/00092380/Documents/Software/tinytim'
-  tinyTimPath = '/group/pawsey0160/rhwcook/Programs/TinyTim/'
+TinyTimACSR = function(input_dir, name, chip, x, y, filter, spectrum=13, size=5.0, focus=0, exBmV=0, jitter=0, machine='local'){
+  
   setwd(input_dir)
   
-  psf_runfile <- paste(input_dir,'/',name,'_run',sep='')
-  fileConn <- file(psf_runfile)
+  if (machine == 'local'){
+    tinyTimPath = '/Users/00092380/Documents/Software/tinytim'
+  } else if (machine %in% c('magnus', 'zeus', 'setonix')) {
+    tinyTimPath = '/group/pawsey0160/rhwcook/Programs/TinyTim/'
+  }
+  
+  psf_runfile = paste(input_dir,'/',name,'_run',sep='')
+  fileConn = file(psf_runfile)
   writeLines(paste(tinyTimPath,"/tiny1 ",name,".param ", "ebmv=",exBmV," << EOF",sep=''), fileConn)
   #writeLines(glue('{tinyTimPath}/tiny1 {name}.param ebmv={exBmV} << EOF'), fileConn)
   close(fileConn)
@@ -31,20 +36,19 @@ TinyTimACSR = function(input_dir, name, chip, x, y, filter, spectrum=13, size=3.
   invisible(capture.output(system(paste('source ',input_dir,'/',name,'_run',sep=''))))
   Sys.sleep(1)
   
-  # if (focus != 0){ ## Adjust focus if specified
-  #   fileConn = file(glue("{input_dir}/{name}.param"),open='r+')
-  #   parLines = readLines(fileConn)
-  #   focusLine = grep("*# Z4 = Focus for center of ACS/WFC field", parLines)
-  #   newFocus = as.numeric(strsplit(parLines[[focusLine]], '#')[[1]][1]) + focus
-  #   parLines[focusLine] = paste0(' ',format(newFocus, digits=4), '   # Z4 = Focus for center of ACS/WFC field')
-  #   writeLines(parLines, fileConn)
-  #   close(fileConn)
-  #   
-  #   
-  #   print(parLines)
-  #   Sys.sleep(1)
-  # }
-  # 
+  if (focus != 0.0){ ## Adjust focus if specified
+    fileConn = file(paste0(input_dir,'/',name,'.param'), open='r+')
+    parLines = readLines(fileConn)
+    focusLine = grep("*# Z4 = Focus for center of ACS/WFC field", parLines)
+    newFocus = as.numeric(strsplit(parLines[[focusLine]], '#')[[1]][1]) + focus
+    parLines[focusLine] = paste0('  ',format(newFocus, digits=4), '   # Z4 = Focus for center of ACS/WFC field')
+    writeLines(parLines, fileConn)
+    close(fileConn)
+
+    #print(parLines)
+    Sys.sleep(1)
+  }
+
   
   invisible(capture.output(system(paste(tinyTimPath,'/tiny2 ',input_dir,'/',name,'.param',sep=''))))
   Sys.sleep(3)
@@ -57,59 +61,81 @@ TinyTimACSR = function(input_dir, name, chip, x, y, filter, spectrum=13, size=3.
   system(paste('rm ', input_dir, '/', name, '_run',sep= ''))
   
   Sys.sleep(1)
+  print(name)
   system(paste('mv ', name,'_image00.fits ', name,'_psf.fits',sep= ''))
   
   #setwd(wrk_dir)
 }
 
+
+
 ### Load in any command-line arguments ###
-# Rscript Generate_HST_PSFs.R [dir] [name] [chip] [x] [y] [focus=0.0] [size=10.0] [filter=F814W] [spectrum=13] [machine='local']
-args = commandArgs(trailingOnly = TRUE) # Parse arguments (if given)
-#args = c('/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/PSFs','test1','2','1000','1000','NA','NA')
-#args = c('/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/DEVILS_Structural_Decomposition/PSFs/Test_PSFs/Focus','testfocus1','2','1000','1000','auto','NA')
+# Rscript Generate_HST_PSFs.R --dir=PATH --name=NAME --machine=['local'|'magnus'|'zeus'|'setonix'] --chip=[1|2] --x --y --focus=0.0 --size=5.0 --filter='F814W' --spectrum=13
 
-computer='zeus'
-if (computer=='local'){
+library(argparse)
+parser = ArgumentParser()
+parser$add_argument("-d", "--dir", required=TRUE,
+                    action='store', dest='dir', type='character', default=NULL,
+                    help="The directory in which to run TinyTim.", metavar="PATH")
+parser$add_argument("-n", "--name", required=TRUE,
+                    action='store', dest='name', type='character', default='test',
+                    help="The base name for all TinyTim outputs.", metavar="NAME")
+parser$add_argument("-m", "--machine",
+                    action='store', dest='machine', type='character', default=NULL, choices=c('local', 'magnus', 'zeus', 'setonix'),
+                    help="The machine on which this code is running", metavar="MACHINE")
+parser$add_argument("-c", "--chip",
+                    action='store', dest='chip', type='integer', default=1, choices=c(1,2),
+                    help="HST ACS chip number. Note this is exactly opposite to the ordering of FITS extensions (chip=2 --> 1st ext, chip=1 --> 2nd ext)", metavar="CHIP")
+parser$add_argument("-x", required=TRUE,
+                    action='store', dest='x', type='integer', default=NULL,
+                    help="The x position in the chip to generate the PSF.", metavar="X")
+parser$add_argument("-y", required=TRUE,
+                    action='store', dest='y', type='integer', default=NULL,
+                    help="The y position in the chip to generate the PSF.", metavar="Y")
+parser$add_argument("-f", "--focus",
+                    action='store', dest='focus', type='double', default=0.0,
+                    help="The focus value (in microns) to apply to HST instrument.", metavar="FOCUS")
+parser$add_argument("-s", "--size",
+                    action='store', dest='size', type='double', default=5.0,
+                    help="The size of the resulting PSF image in arcseconds.", metavar="ARCSEC")
+parser$add_argument("-F", "--filter",
+                    action='store', dest='filter', type='character', default='F814W',
+                    help="The HST filter to select, given as a string (e.g. 'F814W').", metavar="FILTER")
+parser$add_argument("-S", "--spectrum",
+                    action='store', dest='spectrum', type='integer', default=13,
+                    help="The selected spectrum number from the list given in tiny1.", metavar="NUMBER")
+
+# Parse arguments and validate
+args = parser$parse_args()
+
+# Input working directory for TinyTim
+if (!file.exists(args$dir)){
+  dir.create(args$dir)
+}
+
+if (args$machine == 'local'){
   Sys.setenv(TINYTIM='/Users/00092380/Documents/Software/tinytim')
-} else if (computer=='magnus' | computer=='zeus'){
-  Sys.setenv(TINYTIM='/group/pawsey0160/rhwcook/Programs/TinyTim/') # Magnus on Pawsey.
+} else if (args$machine %in% c('magnus', 'zeus', 'setonix')){
+  Sys.setenv(TINYTIM='/group/pawsey0160/rhwcook/Programs/TinyTim/') # Pawsey machines.
 }
 
-if (length(args) < 5) { # get command line args
-  stop(paste0("Require, at least, the arguments: [name] [chip] [x] [y], but only ",length(args), " were given."))
+# HST chip x and y positions
+if (is.na(args$x) | is.na(args$y)){
+  stop(paste0("x/y must be able to be coerced into integer, but instead received ",args$x,", ",args$y,"."))
+}
+
+# focus given in micron
+if (is.na(args$focus) | args$focus == 'NA') {
+  focus = 0.0
 } else {
-  
-  dir = args[1] # directory for PSFs
-  if (!file.exists(dir)){
-    dir.create(dir)
-  }
-  
-  name = args[2] # name of PSF outputs
-  
-  chip = as.integer(args[3]) # CCD chip number
-  if (is.na(chip) | chip > 2 | chip < 1){ stop(paste0("Chip must be able to be coerced into integer of 1 or 2, but instead received ",args[3],".")) }
-  
-  x = as.integer(args[4]) # x position
-  y = as.integer(args[5]) # y position
-  if (is.na(x) | is.na(y)){ stop(paste0("x/y must be able to be coerced into integer, but instead received ",args[4],", ",args[5],".")) }
-  
-  if (is.na(args[6]) | args[6]=='NA') {  # focus given in micron
-    focus = 0.0
-  } else {
-    focus = as.numeric(args[6]) * 0.011 # multiplied by 0.011 to convert from micron to number of wavelengths @ 547 nm
-    if (is.na(focus)) {stop(paste0("focus must be able to be coerced into float, but instead received ", args[6],"."))}
-  }
-  
-  size = ifelse(is.na(args[7]) | args[7]=='NA', 10, as.numeric(args[7])) # Output PSF size
-  if (is.na(size)) {stop(past0("size must be able to be coerced into float, but instead received ", args[7],"."))}
-  
-  filter = ifelse(is.na(args[8]) | args[8]=='NA', 'f814w', args[8]) # Filter
-  
-  spectrum = ifelse(is.na(args[9]) | args[9]=='NA', 13, as.integer(args[9])) # Spectrum choice
-  if (is.na(spectrum) | spectrum > 17){ stop(paste0("spectrum must be able to be coerced into integer and not greater than 17, but instead received ",args[9],".")) }
-  
+  focus = as.numeric(args$focus) * 0.011 # multiplied by 0.011 to convert from micron to number of wavelengths @ 547 nm
+  if (is.na(focus)) {stop(paste0("focus must be able to be coerced into float, but instead received ", args$focus,"."))}
 }
 
+# PSF size
+if (is.na(args$size)) {stop(past0("size must be able to be coerced into float, but instead received ", args$size,"."))}
 
-TinyTimACSR(input_dir=dir, name=name, chip=chip, x=x, y=y, filter=filter, spectrum=spectrum, size=size, focus=focus)
+print(args)
+
+TinyTimACSR(input_dir=args$dir, name=args$name, chip=args$chip, x=args$x, y=args$y, filter=args$filter, spectrum=args$spectrum, size=args$size, focus=focus, machine=args$machine)
 

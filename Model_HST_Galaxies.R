@@ -494,13 +494,23 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
             }
           }
           
-          #>> Rscript Generate_HST_PSFs.R [dir] [name] [chip] [x] [y] [focus=0.0] [size=10.0] [filter=f814w] [spectrum=13]
-          cat(paste0("INFO: Running TinyTim with:\n>> Rscript ",psfScriptPath," ",psfsDir," ",sourceName,"_",expName," ",expChip," ",round(srcLocList[[jj]][1])," ",round(srcLocList[[jj]][2])," ",focus," ",sizePSF,"\n"))
+          # >> Rscript Generate_HST_PSFs.R --dir=PATH --name=NAME --machine=['local'|'magnus'|'zeus'|'setonix'] --chip=[1|2] --x --y --focus=0.0 --size=5.0 --filter='F814W' --spectrum=13
+          psfCmd = paste0('Rscript ',psfScriptPath,
+                          ' --dir=',psfsDir,
+                          ' --name=',sourceName,'_',expName,
+                          ' --machine=',args$computer,
+                          ' --chip=',expChip,
+                          ' -x=',round(srcLocList[[jj]][1]),
+                          ' -y=',round(srcLocList[[jj]][2]),
+                          ' --focus=',focus,
+                          ' --size=',sizePSF,
+                          ' --filter=F814W',
+                          ' --spectrum=13')
+          cat(paste0("INFO: Running TinyTim with:\n>> ",psfCmd,"\n"))
+          
           if (logsToFile) {sink()}
-          invisible(
-            system(paste0("Rscript ",psfScriptPath," ",psfsDir," ",sourceName,"_",expName," ",expChip," ",round(srcLocList[[jj]][1])," ",round(srcLocList[[jj]][2])," ",focus," ",sizePSF))
-          )
-          if (logsToFile) {sink(logFile,append=TRUE)}
+          system(psfCmd)
+          if (logsToFile) {sink(logFile, append=TRUE)}
         }
         
         psf = Rfits_read_image(psfFilename,ext=1)$imDat # read in the PSF file
