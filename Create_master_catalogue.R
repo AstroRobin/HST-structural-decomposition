@@ -26,28 +26,30 @@ if (machine == 'zeus'){
 
 registerDoParallel(cores=nCores)
 
+run = 'Beta'
+
 #outFilename = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Tests/Alpha_test_master_catalogue.csv'
-outFilename = '/group/pawsey0160/rhwcook/HST_Structural_Decomposition/Results/Catalogues/DEVILS_D10_structural_decomposition_catalogue_v1.1.csv'
+outFilename = '/group/pawsey0160/rhwcook/HST_Structural_Decomposition/Results/Catalogues/DEVILS_D10_structural_decomposition_catalogue_v1.2.csv'
 
 #outputsDir = '/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/ProFuse_Outputs/Alpha'
-outputsDir = '/group/pawsey0160/rhwcook/HST_Structural_Decomposition/Results/ProFuse_Outputs'
+outputsDir = paste0('/group/pawsey0160/rhwcook/HST_Structural_Decomposition/Results/ProFuse_Outputs/',run)
 
 #catFilename = '/group/pawsey0160/rhwcook/HST_Structural_Decomposition/Catalogues/Subcats/DEVILS_HST-ACS_exposure_positions.csv'
 #catFilename = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Catalogues/DEVILS_HST-ACS_exposure_positions.csv'
 #catFilename = '/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Jobs/Status/Alpha_fitting_status.csv'
-catFilename = '/group/pawsey0160/rhwcook/HST_Structural_Decomposition/Results/Status/alpha/Alpha_fitting_status.csv'
+catFilename = paste0('/group/pawsey0160/rhwcook/HST_Structural_Decomposition/Results/Status/',run,'/',run,'_fitting_status.csv')
 
-logFile = '/group/pawsey0160/rhwcook/HST_Structural_Decomposition/Results/Catalogues/Master_catalogue_log.txt'
+logFile = paste0('/group/pawsey0160/rhwcook/HST_Structural_Decomposition/Results/Catalogues/Master_catalogue_',run,'_log.txt')
 
 dfCat = fread(catFilename, colClasses=c("UID"="character")) # Catalogue
 dfSample = dfCat[dfCat$hasfit == TRUE] #dfCat[dfCat$masstot > 10^10]
 
-models = c('single', 'psf-exp', 'free-exp')
-modelNames = list(single='single', `psf-exp`='psfexp', `free-exp`='serexp')
+models = c('single', 'psfexp', 'serexp')
+modelNames = list(single='single', psfexp='psfexp', serexp='serexp')
 
 paramRef = list(single=c('sersic.xcen', 'sersic.ycen', 'sersic.mag', 'sersic.re', 'sersic.nser', 'sersic.ang', 'sersic.axrat'),
-                `psf-exp`=c('sersic.xcen', 'sersic.ycen', 'pointsource.mag', 'sersic.mag', 'sersic.re', 'sersic.ang', 'sersic.axrat'),
-                `free-exp`=c('sersic.xcen1', 'sersic.ycen1', 'sersic.mag1', 'sersic.mag2', 'sersic.re1', 'sersic.re2', 'sersic.nser1', 'sersic.ang2', 'sersic.axrat2'))
+                psfexp=c('sersic.xcen', 'sersic.ycen', 'pointsource.mag', 'sersic.mag', 'sersic.re', 'sersic.ang', 'sersic.axrat'),
+                serexp=c('sersic.xcen1', 'sersic.ycen1', 'sersic.mag1', 'sersic.mag2', 'sersic.re1', 'sersic.re2', 'sersic.nser1', 'sersic.ang2', 'sersic.axrat2'))
 
 unlogRef = list()
 for (model in models){
@@ -67,10 +69,10 @@ for (model in models){
   if (model == 'single'){
     colNames = c(colNames, paste(c('xcen', 'ycen', 'mag', 're', 'nser', 'ang', 'axrat'), sfx, sep='_'))
     colNames = c(colNames, paste(c('xcen_err', 'ycen_err', 'mag_err', 're_err', 'nser_err', 'ang_err', 'axrat_err'), sfx, sep='_'))
-  } else if (model == 'psf-exp'){
+  } else if (model == 'psfexp'){
     colNames = c(colNames, paste(c('xcen', 'ycen', 'mag1', 'mag2', 're2', 'ang2', 'axrat2'), sfx, sep='_'))
     colNames = c(colNames, paste(c('xcen_err', 'ycen_err', 'mag1_err', 'mag2_err', 're2_err', 'ang2_err', 'axrat2_err'), sfx, sep='_'))
-  } else if (model == 'free-exp'){
+  } else if (model == 'serexp'){
     colNames = c(colNames, paste(c('xcen', 'ycen', 'mag1', 'mag2', 're1', 're2', 'nser1', 'ang2', 'axrat2'), sfx, sep='_'))
     colNames = c(colNames, paste(c('xcen_err', 'ycen_err', 'mag1_err', 'mag2_err', 're1_err', 're2_err', 'nser1_err', 'ang2_err', 'axrat2_err'), sfx, sep='_'))
   }
@@ -79,7 +81,7 @@ for (model in models){
 }
 
 #galList = list.files(outputsDir)
-
+print(nrow(dfSample))
 sample = foreach(ii = 1:nrow(dfSample), .combine='rbind') %dopar% {
   
   sourceName = dfSample$UID[ii]
@@ -89,7 +91,7 @@ sample = foreach(ii = 1:nrow(dfSample), .combine='rbind') %dopar% {
   writeLines(paste0(ii,': ',sourceName), fileConn )
   close(fileConn)
   
-  outputFile = paste0(outputsDir,'/',sourceName,'/',sourceName,'_output.rds')
+  outputFile = paste0(outputsDir,'/',sourceName,'/D',sourceName,'_output.rds')
   if (file.exists(outputFile)){
     result = readRDS(outputFile)
   } else {
@@ -106,14 +108,14 @@ sample = foreach(ii = 1:nrow(dfSample), .combine='rbind') %dopar% {
     dof = length(result$highFit[[model]]$parm)
     
     ### Using LaplacesDemon MCMC chains
-    #bestParams = as.numeric(result$highFit[[model]]$LD_last$Summary1[paramRef[[model]],'Mean'])
-    #bestParams[unlogRef[[model]]] = 10^bestParams[unlogRef[[model]]]
-    #bestParamErrors = result$highFit[[model]]$LD_last$Summary1[paramRef[[model]],'SD']
+    bestParams = as.numeric(result$highFit[[model]]$LD_last$Summary1[paramRef[[model]],'Mean'])
+    bestParams[unlogRef[[model]]] = 10^bestParams[unlogRef[[model]]]
+    bestParamErrors = result$highFit[[model]]$LD_last$Summary1[paramRef[[model]],'SD']
     
     ### Using ProFit monitored parameter values
-    bestParams = as.numeric(result$highFit[[model]]$parm[paramRef[[model]]])
-    bestParams[unlogRef[[model]]] = 10^bestParams[unlogRef[[model]]]
-    bestParamErrors = as.numeric(result$highFit[[model]]$error)
+    # bestParams = as.numeric(result$highFit[[model]]$parm[paramRef[[model]]])
+    # bestParams[unlogRef[[model]]] = 10^bestParams[unlogRef[[model]]]
+    # bestParamErrors = as.numeric(result$highFit[[model]]$error)
     
     LP = result$highFit[[model]]$LD_last$Summary1['LP','Mean']
     DIC = result$highFit[[model]]$LD_last$DIC1[3]
@@ -149,6 +151,8 @@ sample = foreach(ii = 1:nrow(dfSample), .combine='rbind') %dopar% {
   return(unlist(outList))
   
 }
+
+print(sample)
 
 # covert to data.table
 sample = data.table(sample)

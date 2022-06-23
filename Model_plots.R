@@ -33,7 +33,7 @@ profitImageScale = function(z, zlim, col = heat.colors(12),
 }
 
 
-multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magzps, offsets,
+multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magzps, offsets, 
                                whichcomponents=list(sersic="all",moffat="all",ferrer="all",pointsource="all"),
                                cmap = rev(colorRampPalette(brewer.pal(9,'RdYlBu'))(100)),
                                errcmap = rev(c("#B00000",colorRampPalette(brewer.pal(9,'RdYlBu'))(100)[2:99],"#0000B0")),
@@ -41,6 +41,8 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magz
   
   contlw = 3
   maxsigma = 5
+  pixscale = 0.05
+  SBlim = 26 # surface brightness limit in mags/arcsec
   
   nexps = sum(!grepl('mon.names|parm.names|N|Nim', names(datalist)))
   ndofs = ifelse(missing(dofs), 0, length(dofs)) # degrees of freedom
@@ -97,6 +99,8 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magz
                                  magzero = magZP, psf = datalist[[ii]]$psf, dim = dim(image),
                                  psfdim = dim(datalist[[ii]]$psf), whichcomponents = whichcomponents)$z
     
+    sbimage = array(profitFlux2SB(modelimage, magzero=magZP, pixscale=pixscale), dim=dim(image))
+    
     data = list(x=1:dim(image)[1],y=1:dim(image)[2],z=image)
     residual = image - modelimage
     
@@ -135,6 +139,7 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magz
                                     magzero = magZP, psf = NULL, dim = dim(image), whichcomponents = diskcomp)$z
         
         b2timage = bulgemodel/(bulgemodel + diskmodel)
+        b2timage[sbimage > SBlim] = NA
         
       }
     

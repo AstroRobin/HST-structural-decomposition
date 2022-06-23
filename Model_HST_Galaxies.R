@@ -225,15 +225,20 @@ get_model_opts = function(model){
 }
 
 
-adjust_nser_intervals = function(intervals, model){
+adjust_intervals = function(intervals, model){
   
   if (model == 'single'){ # Single component Sersic models (pure-disks and Ellipticals)
     intervals[[1]]$nser = list(c(0.25, 10.0))
+    intervals[[1]]$re = list(c(0.05, 100.0))
   } else if (model %in% c('psfexp', 'psfser')){ # PSF + Sersic models
     intervals[[2]]$nser = list(c(0.25, 10.0)) # disk
+    intervals[[2]]$re = list(c(0.05, 100.0))
   } else if (model %in% c('devexp', 'devser', 'serexp', 'serser')){ # Sersic + Sersic models
     intervals[[1]]$nser[1] = list(c(0.25, 10.0)) # bulge
     intervals[[1]]$nser[2] = list(c(0.25, 10.0)) # disk
+    
+    intervals[[1]]$re[1] = list(c(0.05, 100.0)) # bulge
+    intervals[[1]]$re[2] = list(c(0.05, 100.0)) # disk
   } else {
     cat(paste0("ERROR: Model name '",model,"' not recognised.\n"))
   }
@@ -554,22 +559,26 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         segimList[[expName]] = profoundMakeSegimDilate(segim=segimList[[expName]],size=3)$segim # This dilation will catch any aliasing holes caused by warping integers maps onto different (typically rotated) grids
         segimList[[expName]][is.na(segimList[[expName]])] = 0
         
-        if (toSave){png(filename = paste0(plotDir,'/',sourceName,'/D',sourceName,'-',expNameList[jj],'_sky_statistics.png'), width=720, height=720, pointsize=16)}
-        if (toPlot|toSave){par(mfrow=c(2,2), mar = c(1,1,1,1))}
+        #if (toSave){png(filename = paste0(plotDir,'/',sourceName,'/D',sourceName,'-',expNameList[jj],'_sky_statistics.png'), width=720, height=720, pointsize=16)}
+        #if (toPlot|toSave){par(mfrow=c(2,2), mar = c(1,1,1,1))}
         skyList[[expName]] = profoundProFound(image=imgCutList[[jj]]$imDat, segim=segimList[[expName]], mask=maskList[[jj]], magzero = magzpList[[jj]], gain=ccdGain, plot=FALSE,
                                               sigma=1.25, skycut=0.5, SBdilate=3, size=19, box=skyBoxDims)
         
-        if (toPlot|toSave){
+        if (toPlot){#|toSave){
           plot(skyList[[expName]])
         }
         
-        if(toSave){dev.off()}
+        #if(toSave){dev.off()}
         
         # Subtract sky
         imgList[[expName]] = imgCutList[[jj]]$imDat - skyList[[jj]]$sky
         hdrList[[expName]] = imgCutList[[jj]]$raw
         
+        # Purge some unnecessary outputs from the sky lists
+        skyList[[expName]][!names(skyList[[expName]]) %in% c("sky", "skyRMS", "segstats", "call", "ProFound.version")] = NULL
+        
       }
+      
       
       ## Save images of the image cutouts + overlaid segmentation and mask maps
       if (toPlot|toSave){
@@ -744,7 +753,6 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         
         cat("INFO: Generating found2Fits objects for each exposure cutout.\n")
         dataList = profuseMultiImageFound2Fit(image_list = imgList, psf_list = psfList, segim_list = segimList, mask_list = maskList, offset_list = offsets,
-                                              # SBdilate=2.5, reltol=1.5, ext=5,
                                               magzero=unlist(magzpList), gain = gainList,
                                               Ncomp=modelOpts$n_comps,
                                               sing_nser_fit=modelOpts$sing_nser_fit,
@@ -757,14 +765,14 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         # Rename F2F objects according to their exposure name
         for (jj in seq(1, numExps)){
           names(dataList)[names(dataList) == paste0("image",jj)] = expNameList[jj]
-          dataList[[jj]]$intervals = adjust_nser_intervals(model, intervals=dataList[[jj]]$intervals) # change Sersic index intervals
+          dataList[[jj]]$intervals = adjust_intervals(model, intervals=dataList[[jj]]$intervals) # change Sersic index and Re intervals
         }
         
         
         cat(paste0("INFO: Running Highlander optimisation for model '",model,"'.\n"))
         cat(paste0("Optim iters: ",optimOpts$optim_iters,"\nNiters: ",optimOpts$Niters,"\nNfinalMCMC: ",optimOpts$NfinalMCMC,"\nwalltime: ",optimOpts$walltime,"\n\n"))
         highFit = profuseMultiImageDoFit(image_list = imgList, dataList, ablim=1, keepall=TRUE,
-                                         optim_iters=optimOpts$optim_iters, Niters=optimOpts$Niters, NfinalMCMC=optimOpts$NfinalMCMC, walltime=optimOpts$walltime, 
+                                         optim_iters=optimOpts$optim_iters, Nitersprofit=optimOpts$Niters, NfinalMCMC=optimOpts$NfinalMCMC, walltime=optimOpts$walltime, 
                                          CMAargs = optimOpts$CMA, LDargs = optimOpts$LD)
         
         if (toPlot|toSave){
@@ -772,11 +780,7 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
           if (toSave) {CairoPNG(filename=paste0(plotDir,'/',sourceName,'/D',sourceName,'_',model,'_multifit.png'), width=(nPlot+1)*325+60, height=1000, pointsize=20)}
           multiImageMakePlots(datalist=dataList[1:nPlot], imagestack=imgCutStack, segim=seg$segim, parm=highFit$parm, magzps = magzpList,
                               plottext=paste0("UID:\n",sourceName,"\n\n # Exposures: ",dataList$Nim,"\n log(Mstar): ",format(round(log10(dfCat[['StellarMass']][idx]), 2), nsmall = 2),"\n z: ",format(round(dfCat[['zBest']][ii], 3), nsmall = 2)))
-          # modelnum = 2
-          # if (toSave) {CairoPNG(filename=paste0('/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Tests/D',result$sourceName,'_',result$models[modelnum],'_multifit.png'), width=(length(result$expNames)+1)*325+50, height=1000, pointsize=20)}
-          # multiImageMakePlots(datalist=result$dataList[[modelnum]], imagestack=result$imgStack, segim=result$segimList[[1]], parm=result$highFit[[modelnum]]$parm, magzps = result$magzpList,
-          #                     plottext=paste0("UID:\n",result$sourceName,"\n\n # Exposures: ",result$numimgs,"\n log(Mstar): ",format(round(log10(result$row[['StellarMass']][1]), 2), nsmall = 2),"\n z: ",format(round(result$row[['zBest']][1], 3), nsmall = 2)))
-          
+
           if (toSave){dev.off()}
         }
         
@@ -832,6 +836,15 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
 
 ### Run in RStudio afterwards ###
 #result = readRDS('/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/ProFuse_Outputs/101505979732574752/101505979732574752_deV-exp_output.rds')
+
+
+# modelnum = 2
+# if (toSave) {CairoPNG(filename=paste0('/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Tests/D',result$sourceName,'_',result$models[modelnum],'_multifit.png'), width=(length(result$expNames)+1)*325+50, height=1000, pointsize=20)}
+# multiImageMakePlots(datalist=result$dataList[[modelnum]], imagestack=result$imgStack, segim=result$segimList[[1]], parm=result$highFit[[modelnum]]$parm, magzps = result$magzpList,
+#                     plottext=paste0("UID:\n",result$sourceName,"\n\n # Exposures: ",result$numimgs,"\n log(Mstar): ",format(round(log10(result$row[['StellarMass']][1]), 2), nsmall = 2),"\n z: ",format(round(result$row[['zBest']][1], 3), nsmall = 2)))
+
+
+
 
 ##### Model HST Galaxies Overview #####
 ### Find all sources that exist with this exposure ###

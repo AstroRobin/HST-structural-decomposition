@@ -4,14 +4,11 @@
 # Author: R. H. W. Cook
 # Date: 25/01/2022
 
-
-library(glue)
-
 evalGlobal = TRUE
 
 TinyTimACSR = function(input_dir, name, chip, x, y, filter, spectrum=13, size=3.0, focus=0, exBmV=0, jitter=0){
-  tinyTimPath = '/Users/00092380/Documents/Software/tinytim'
-  #tinyTimPath = '/group/pawsey0160/rhwcook/Programs/TinyTim/'
+  #tinyTimPath = '/Users/00092380/Documents/Software/tinytim'
+  tinyTimPath = '/group/pawsey0160/rhwcook/Programs/TinyTim/'
   setwd(input_dir)
   
   psf_runfile <- paste(input_dir,'/',name,'_run',sep='')
@@ -66,20 +63,20 @@ TinyTimACSR = function(input_dir, name, chip, x, y, filter, spectrum=13, size=3.
 }
 
 ### Load in any command-line arguments ###
-# Rscript Generate_HST_PSFs.R [dir] [name] [chip] [x] [y] [focus=0.0] [size=10.0] [filter=F814W] [spectrum=13] 
+# Rscript Generate_HST_PSFs.R [dir] [name] [chip] [x] [y] [focus=0.0] [size=10.0] [filter=F814W] [spectrum=13] [machine='local']
 args = commandArgs(trailingOnly = TRUE) # Parse arguments (if given)
 #args = c('/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/PSFs','test1','2','1000','1000','NA','NA')
 #args = c('/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/DEVILS_Structural_Decomposition/PSFs/Test_PSFs/Focus','testfocus1','2','1000','1000','auto','NA')
 
-computer='local'
+computer='zeus'
 if (computer=='local'){
   Sys.setenv(TINYTIM='/Users/00092380/Documents/Software/tinytim')
-} else if (computer=='magnus'){
+} else if (computer=='magnus' | computer=='zeus'){
   Sys.setenv(TINYTIM='/group/pawsey0160/rhwcook/Programs/TinyTim/') # Magnus on Pawsey.
 }
 
 if (length(args) < 5) { # get command line args
-  stop(glue("Require, at least, the arguments: [name] [chip] [x] [y], but only {length(args)} were given."))
+  stop(paste0("Require, at least, the arguments: [name] [chip] [x] [y], but only ",length(args), " were given."))
 } else {
   
   dir = args[1] # directory for PSFs
@@ -90,26 +87,26 @@ if (length(args) < 5) { # get command line args
   name = args[2] # name of PSF outputs
   
   chip = as.integer(args[3]) # CCD chip number
-  if (is.na(chip) | chip > 2 | chip < 1){ stop(glue("Chip must be able to be coerced into integer of 1 or 2, but instead received {args[3]}.")) }
+  if (is.na(chip) | chip > 2 | chip < 1){ stop(paste0("Chip must be able to be coerced into integer of 1 or 2, but instead received ",args[3],".")) }
   
   x = as.integer(args[4]) # x position
   y = as.integer(args[5]) # y position
-  if (is.na(x) | is.na(y)){ stop(glue("x/y must be able to be coerced into integer, but instead received {args[4]}, {args[5]}.")) }
+  if (is.na(x) | is.na(y)){ stop(paste0("x/y must be able to be coerced into integer, but instead received ",args[4],", ",args[5],".")) }
   
   if (is.na(args[6]) | args[6]=='NA') {  # focus given in micron
     focus = 0.0
   } else {
     focus = as.numeric(args[6]) * 0.011 # multiplied by 0.011 to convert from micron to number of wavelengths @ 547 nm
-    if (is.na(focus)) {stop(glue("focus must be able to be coerced into float, but instead received {args[6]}."))}
+    if (is.na(focus)) {stop(paste0("focus must be able to be coerced into float, but instead received ", args[6],"."))}
   }
   
   size = ifelse(is.na(args[7]) | args[7]=='NA', 10, as.numeric(args[7])) # Output PSF size
-  if (is.na(size)) {stop(glue("size must be able to be coerced into float, but instead received {args[7]}."))}
+  if (is.na(size)) {stop(past0("size must be able to be coerced into float, but instead received ", args[7],"."))}
   
   filter = ifelse(is.na(args[8]) | args[8]=='NA', 'f814w', args[8]) # Filter
   
   spectrum = ifelse(is.na(args[9]) | args[9]=='NA', 13, as.integer(args[9])) # Spectrum choice
-  if (is.na(spectrum) | spectrum > 17){ stop(glue("spectrum must be able to be coerced into integer and not greater than 17, but instead received {args[9]}.")) }
+  if (is.na(spectrum) | spectrum > 17){ stop(paste0("spectrum must be able to be coerced into integer and not greater than 17, but instead received ",args[9],".")) }
   
 }
 
