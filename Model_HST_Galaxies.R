@@ -476,7 +476,7 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         skyList[[expName]] = Rwcs_warp(image_in=skyGrid$sky, header_in = imgCutList[[jj]]$raw, header_out = imgCutList[[1]]$raw)$imDat
         skyRMSList[[expName]] = Rwcs_warp(image_in=skyGrid$skyRMS, header_in = imgCutList[[jj]]$raw, header_out = imgCutList[[1]]$raw)$imDat
         
-        maskWarpList[[expName]] = apply(round(Rwcs_warp(image_in=maskList[[jj]], header_in = imgCutList[[jj]]$raw, header_out = imgCutList[[1]]$raw)$imDat, digits=0), c(1,2), as.integer)
+        maskWarpList[[expName]] = Rwcs_warp(image_in=maskList[[jj]], header_in = imgCutList[[jj]]$raw, header_out = imgCutList[[1]]$raw, interpolation='nearest', doscale=FALSE, direction='backward')$imDat
         maskWarpList[[expName]][is.na(maskWarpList[[expName]])] = 1 # NAs produced by unoccupied regions in the warped mask should be converted to 1, i.e. masked
         
         # Load or Generate PSF
@@ -565,13 +565,13 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
       for (jj in seq(1,numExps)){
         expName = dfCat[[paste0('name_exp',jj)]][idx]
       
-        segimList[[expName]] = apply(round(Rwcs_warp(image_in=seg$segim, header_in = imgCutList[[1]]$raw, header_out = imgCutList[[jj]]$raw, doscale = FALSE, interpolation='nearest')$imDat, digits=0), c(1,2), as.integer)
+        segimList[[expName]] = Rwcs_warp(image_in=seg$segim, header_in = imgCutList[[1]]$raw, header_out = imgCutList[[jj]]$raw, doscale = FALSE, interpolation='nearest', direction='backward')$imDat
+        segimList[[expName]][is.na(segimList[[expName]])] = 0 # fix any NAs that might be produced during the warp
         segimList[[expName]] = profoundMakeSegimDilate(segim=segimList[[expName]],size=3)$segim # This dilation will catch any aliasing holes caused by warping integers maps onto different (typically rotated) grids
-        segimList[[expName]][is.na(segimList[[expName]])] = 0
         
         #if (toSave){png(filename = paste0(plotDir,'/',sourceName,'/D',sourceName,'-',expNameList[jj],'_sky_statistics.png'), width=720, height=720, pointsize=16)}
         #if (toPlot|toSave){par(mfrow=c(2,2), mar = c(1,1,1,1))}
-        skyList[[expName]] = profoundProFound(image=imgCutList[[jj]]$imDat, segim=segimList[[expName]], mask=maskList[[jj]], magzero = magzpList[[jj]], gain=ccdGain, plot=FALSE,
+        skyList[[expName]] = profoundProFound(image=imgCutList[[jj]]$imDat, segim=segimList[[expName]], mask=maskList[[jj]], magzero = magzpList[[jj]], gain=gainList[[jj]], plot=FALSE,
                                               sigma=1.25, skycut=0.5, SBdilate=3, size=19, box=skyBoxDims)
         
         if (toPlot){#|toSave){

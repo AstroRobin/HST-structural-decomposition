@@ -4,6 +4,8 @@
 # Author: R. H. W. Cook
 # Date: 25/01/2022
 
+.libPaths(c("/group/pawsey0160/software/sles12sp3/apps/sandybridge/gcc/4.8.5/r/3.6.3/lib64/R/library",.libPaths()))
+
 evalGlobal = TRUE
 
 TinyTimACSR = function(input_dir, name, chip, x, y, filter, spectrum=13, size=5.0, focus=0, exBmV=0, jitter=0, machine='local'){
