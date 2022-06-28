@@ -388,6 +388,7 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
       
       ### Load each exposure's image & DQ map from the observation set
       expNameList = list() # The names of each exposure
+      chipList = list() # which chip the source resides on for each exposure
       magzpList = list() # The magnitude zeropoints
       gainList = list() # The CCD gain, typically 1.0 bu is 2.0 in some PIDs.
       
@@ -431,14 +432,14 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         }
         
         # The FITS extensions indices for the chip
-        expChip = dfCat[[paste0('chip_exp',jj)]][idx]
-        sciIndex = ifelse(expChip == 1, 2+3, 2) # The index in HST fits files that points to the science image HDU
-        errIndex = ifelse(expChip == 1, 3+3, 3) # The index in HST fits files that points to the error HDU
-        dqIndex = ifelse(expChip == 1, 4+3, 4) # The index in HST fits files that points to the data quality HDU
+        chipList[[jj]] = dfCat[[paste0('chip_exp',jj)]][idx]
+        sciIndex = ifelse(chipList[[jj]] == 1, 2+3, 2) # The index in HST fits files that points to the science image HDU
+        errIndex = ifelse(chipList[[jj]] == 1, 3+3, 3) # The index in HST fits files that points to the error HDU
+        dqIndex = ifelse(chipList[[jj]] == 1, 4+3, 4) # The index in HST fits files that points to the data quality HDU
         
         # Load the image, data quality (dq) map and hdr objects
         imgFilename = paste0(framesDir,"/",proposalID,"/",obsetID,"/",expName,"_flt.fits")
-        cat(paste0("\n\nINFO: Loading exposure #",jj," on chip ",expChip,": ",imgFilename,"\n"))
+        cat(paste0("\n\nINFO: Loading exposure #",jj," on chip ",chipList[[jj]],": ",imgFilename,"\n"))
         hdulist = Rfits_read_all(imgFilename, pointer=FALSE, zap=c('LOOKUP','DP[1-2]'))
         
         img = hdulist[[sciIndex]] # this is an Rfits_image object
@@ -472,11 +473,17 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         
         # Warp images and dqs onto a common WCS.
         cat(paste0("INFO: Warping image and dq map to a common WCS\n"))
-        imgWarpList[[expName]] = Rwcs_warp(image_in=imgCutList[[jj]], header_out = imgCutList[[1]]$raw)
-        skyList[[expName]] = Rwcs_warp(image_in=skyGrid$sky, header_in = imgCutList[[jj]]$raw, header_out = imgCutList[[1]]$raw)$imDat
-        skyRMSList[[expName]] = Rwcs_warp(image_in=skyGrid$skyRMS, header_in = imgCutList[[jj]]$raw, header_out = imgCutList[[1]]$raw)$imDat
+        if (jj == 1){ # define the reference WCS on which to warp subsequent frames
+          dimsWarp = 2 * floor(cutoutBox * sqrt(2) / 2) + 1 # Gets the nearest odd number to a sqrt(2) times expansion of the original cutout size.
+          cenImg = round((cutoutBox - 1) / 2 + 1) # centre of the original cutout
+          hdrToWarp = imgCutList[[jj]][cenImg[1], cenImg[2], box=dimsWarp]$raw
+        }
         
-        maskWarpList[[expName]] = Rwcs_warp(image_in=maskList[[jj]], header_in = imgCutList[[jj]]$raw, header_out = imgCutList[[1]]$raw, interpolation='nearest', doscale=FALSE, direction='backward')$imDat
+        imgWarpList[[expName]] = Rwcs_warp(image_in=imgCutList[[jj]], header_out = hdrToWarp)
+        skyList[[expName]] = Rwcs_warp(image_in=skyGrid$sky, header_in = imgCutList[[jj]]$raw, header_out = hdrToWarp)$imDat
+        skyRMSList[[expName]] = Rwcs_warp(image_in=skyGrid$skyRMS, header_in = imgCutList[[jj]]$raw, header_out = hdrToWarp)$imDat
+        
+        maskWarpList[[expName]] = Rwcs_warp(image_in=maskList[[jj]], header_in = imgCutList[[jj]]$raw, header_out = hdrToWarp, interpolation='nearest', doscale=FALSE, direction='backward')$imDat
         maskWarpList[[expName]][is.na(maskWarpList[[expName]])] = 1 # NAs produced by unoccupied regions in the warped mask should be converted to 1, i.e. masked
         
         # Load or Generate PSF
@@ -499,7 +506,7 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
                           ' --dir=',psfsDir,
                           ' --name=',sourceName,'_',expName,
                           ' --machine=',args$computer,
-                          ' --chip=',expChip,
+                          ' --chip=',chipList[[jj]],
                           ' -x=',round(srcLocList[[jj]][1]),
                           ' -y=',round(srcLocList[[jj]][2]),
                           ' --focus=',focus,
@@ -564,10 +571,10 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
       hdrList = list()
       for (jj in seq(1,numExps)){
         expName = dfCat[[paste0('name_exp',jj)]][idx]
-      
-        segimList[[expName]] = Rwcs_warp(image_in=seg$segim, header_in = imgCutList[[1]]$raw, header_out = imgCutList[[jj]]$raw, doscale = FALSE, interpolation='nearest', direction='backward')$imDat
+        
+        segimList[[expName]] = Rwcs_warp(image_in=seg$segim, header_in = hdrToWarp, header_out = imgCutList[[jj]]$raw, doscale = FALSE, interpolation='nearest', direction='backward')$imDat
         segimList[[expName]][is.na(segimList[[expName]])] = 0 # fix any NAs that might be produced during the warp
-        segimList[[expName]] = profoundMakeSegimDilate(segim=segimList[[expName]],size=3)$segim # This dilation will catch any aliasing holes caused by warping integers maps onto different (typically rotated) grids
+        #segimList[[expName]] = profoundMakeSegimDilate(segim=segimList[[expName]],size=3)$segim # This dilation will catch any aliasing holes caused by warping integers maps onto different (typically rotated) grids
         
         #if (toSave){png(filename = paste0(plotDir,'/',sourceName,'/D',sourceName,'-',expNameList[jj],'_sky_statistics.png'), width=720, height=720, pointsize=16)}
         #if (toPlot|toSave){par(mfrow=c(2,2), mar = c(1,1,1,1))}
@@ -584,7 +591,7 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         imgList[[expName]] = imgCutList[[jj]]$imDat - skyList[[jj]]$sky
         hdrList[[expName]] = imgCutList[[jj]]$raw
         
-        # Purge some unnecessary outputs from the sky lists
+        # Purge the unnecessary/duplicated outputs from the sky lists
         skyList[[expName]][!names(skyList[[expName]]) %in% c("sky", "skyRMS", "segstats", "call", "ProFound.version")] = NULL
         
       }
@@ -742,6 +749,7 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
                      sourceName=sourceName,
                      numimgs=length(expNameList),
                      expNames=expNameList,
+                     chipList=chipList,
                      imgList=imgList,
                      hdrList=hdrList,
                      imgStack=imgCutStack,
