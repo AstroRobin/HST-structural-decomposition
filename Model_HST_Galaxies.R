@@ -24,7 +24,8 @@
 ### Get arguments from command-line ###
 #######################################
 
-.libPaths(c("/group/pawsey0160/software/sles12sp3/apps/sandybridge/gcc/4.8.5/r/3.6.3/lib64/R/library",.libPaths()))
+.libPaths(c('/group/pawsey0160/rhwcook/r/3.6',.libPaths()))
+#.libPaths(c("/group/pawsey0160/software/sles12sp3/apps/sandybridge/gcc/4.8.5/r/3.6.3/lib64/R/library",.libPaths()))
 
 library(argparse)
 parser = ArgumentParser()
@@ -229,16 +230,16 @@ adjust_intervals = function(intervals, model){
   
   if (model == 'single'){ # Single component Sersic models (pure-disks and Ellipticals)
     intervals[[1]]$nser = list(c(0.25, 10.0))
-    intervals[[1]]$re = list(c(0.05, 100.0))
+    intervals[[1]]$re = list(c(0.05, 200.0))
   } else if (model %in% c('psfexp', 'psfser')){ # PSF + Sersic models
     intervals[[2]]$nser = list(c(0.25, 10.0)) # disk
-    intervals[[2]]$re = list(c(0.05, 100.0))
+    intervals[[2]]$re = list(c(0.05, 200.0))
   } else if (model %in% c('devexp', 'devser', 'serexp', 'serser')){ # Sersic + Sersic models
     intervals[[1]]$nser[1] = list(c(0.25, 10.0)) # bulge
     intervals[[1]]$nser[2] = list(c(0.25, 10.0)) # disk
     
-    intervals[[1]]$re[1] = list(c(0.05, 100.0)) # bulge
-    intervals[[1]]$re[2] = list(c(0.05, 100.0)) # disk
+    intervals[[1]]$re[1] = list(c(0.05, 200.0)) # bulge
+    intervals[[1]]$re[2] = list(c(0.05, 200.0)) # disk
   } else {
     cat(paste0("ERROR: Model name '",model,"' not recognised.\n"))
   }
@@ -323,7 +324,7 @@ roughFit = FALSE
 
 toPlot = FALSE #TRUE # Whether to show plots
 toSave = TRUE # Whether to save plots
-logsToFile = TRUE # Whether print statements should be sent to separate files (good when running parallel computing)
+logsToFile = ifelse(args$computer=='local', FALSE, TRUE) # Whether print statements should be sent to separate files (good when running parallel computing)
 
 ######################################
 ### Select Optimisation Parameters ###
@@ -438,15 +439,20 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         dqIndex = ifelse(chipList[[jj]] == 1, 4+3, 4) # The index in HST fits files that points to the data quality HDU
         
         # Load the image, data quality (dq) map and hdr objects
-        imgFilename = paste0(framesDir,"/",proposalID,"/",obsetID,"/",expName,"_flt.fits")
+        #imgFilename = paste0(framesDir,"/",proposalID,"/",obsetID,"/",expName,"_flt.fits")
+        imgFilename = paste0(framesDir,"/",proposalID,"/",obsetID,"/",expName,"_wcscorr_flt.fits")
         cat(paste0("\n\nINFO: Loading exposure #",jj," on chip ",chipList[[jj]],": ",imgFilename,"\n"))
+        if (!file.exists(imgFilename) & file.exists(gsub('_wcscorr','',imgFilename))){
+          cat(paste0("WARNING: No WCS-corrected file found for: '",expName,"'"))
+        }
+        
         hdulist = Rfits_read_all(imgFilename, pointer=FALSE, zap=c('LOOKUP','DP[1-2]'))
         
         img = hdulist[[sciIndex]] # this is an Rfits_image object
         dq = hdulist[[dqIndex]]
         
         # Get source position info in exposure
-        srcLocList[[expName]] = Rwcs_s2p(RA=dfCat[['RAcen']][idx], Dec=dfCat[['DECcen']][idx], header = img$raw, pixcen='R')
+        srcLocList[[expName]] = Rwcs_s2p(RA=dfCat[['RAmax']][idx], Dec=dfCat[['Decmax']][idx], header = img$raw, pixcen='R')
         
         # Calculate magnitude zeropoint
         fluxlambda = from_header(hdr = img$hdr, keys = 'PHOTFLAM', as=as.numeric)
@@ -578,7 +584,7 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         
         #if (toSave){png(filename = paste0(plotDir,'/',sourceName,'/D',sourceName,'-',expNameList[jj],'_sky_statistics.png'), width=720, height=720, pointsize=16)}
         #if (toPlot|toSave){par(mfrow=c(2,2), mar = c(1,1,1,1))}
-        skyList[[expName]] = profoundProFound(image=imgCutList[[jj]]$imDat, segim=segimList[[expName]], mask=maskList[[jj]], magzero = magzpList[[jj]], gain=gainList[[jj]], plot=FALSE,
+        skyList[[expName]] = profoundProFound(image=imgCutList[[jj]]$imDat, header=imgCutList[[jj]]$hdr,  segim=segimList[[expName]], mask=maskList[[jj]], magzero = magzpList[[jj]], gain=gainList[[jj]], plot=FALSE,
                                               sigma=1.25, skycut=0.5, SBdilate=3, size=19, box=skyBoxDims)
         
         if (toPlot){#|toSave){
@@ -614,6 +620,7 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         }
         
         for (jj in seq(1,numExps)){
+          #profoundSegimPlot(image=imgList[[jj]], segim=segimList[[jj]], mask=maskList[[jj]], bad=NA)
           profoundSegimPlot(image=imgList[[jj]], segim=segimList[[jj]], mask=maskList[[jj]], bad=NA)
           text(0.1*cutoutBox[1],0.925*cutoutBox[2],expNameList[jj], adj=0, col='white', cex=1.5*(0.5 + 0.75 * numExps%/%4))
         }
@@ -771,12 +778,13 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         
         cat("INFO: Generating found2Fits objects for each exposure cutout.\n")
         dataList = profuseMultiImageFound2Fit(image_list = imgList, psf_list = psfList, segim_list = segimList, mask_list = maskList, offset_list = offsets,
+                                              loc = cutoutBox / 2, loc_use = TRUE,
                                               magzero=unlist(magzpList), gain = gainList,
                                               Ncomp=modelOpts$n_comps,
                                               sing_nser_fit=modelOpts$sing_nser_fit,
                                               disk_nser_fit=modelOpts$disk_nser_fit,  disk_nser=modelOpts$disk_nser,
                                               bulge_nser_fit=modelOpts$bulge_nser_fit, bulge_nser=modelOpts$bulge_nser, bulge_circ=modelOpts$bulge_circ,
-                                              pos_delta = 10, # does this pos_delta value work for the biggest galaxies?
+                                              pos_delta = 20, # does this pos_delta value work for the biggest galaxies?
                                               rough=roughFit, tightcrop = TRUE, deblend_extra=FALSE, fit_extra=FALSE, plot=toPlot)
         
         
@@ -784,6 +792,8 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         for (jj in seq(1, numExps)){
           names(dataList)[names(dataList) == paste0("image",jj)] = expNameList[jj]
           dataList[[jj]]$intervals = adjust_intervals(model, intervals=dataList[[jj]]$intervals) # change Sersic index and Re intervals
+          
+          print(dataList[[jj]]$init[c(1,2)])
         }
         
         
@@ -850,17 +860,6 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
   
   
 } # END main galaxy loop
-
-
-### Run in RStudio afterwards ###
-#result = readRDS('/Users/00092380/Documents/Storage/PostDoc-UWA/HST_COSMOS/ProFuse_Outputs/101505979732574752/101505979732574752_deV-exp_output.rds')
-
-
-# modelnum = 2
-# if (toSave) {CairoPNG(filename=paste0('/Users/00092380/Documents/GoogleDrive/PostDoc-UWA/Tasks/HST_Structural_Decomposition/Tests/D',result$sourceName,'_',result$models[modelnum],'_multifit.png'), width=(length(result$expNames)+1)*325+50, height=1000, pointsize=20)}
-# multiImageMakePlots(datalist=result$dataList[[modelnum]], imagestack=result$imgStack, segim=result$segimList[[1]], parm=result$highFit[[modelnum]]$parm, magzps = result$magzpList,
-#                     plottext=paste0("UID:\n",result$sourceName,"\n\n # Exposures: ",result$numimgs,"\n log(Mstar): ",format(round(log10(result$row[['StellarMass']][1]), 2), nsmall = 2),"\n z: ",format(round(result$row[['zBest']][1], 3), nsmall = 2)))
-
 
 
 
