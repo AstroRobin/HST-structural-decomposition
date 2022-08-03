@@ -128,7 +128,7 @@ number2binary = function(number, numbits) {
 
 
 ### Check whether a pixel should be masked based on the value in the corresponding Data Quality map.
-mask_pixel = function(dqval, flags=c(3,5,8,10,13)){
+mask_pixel = function(dqval, flags=c(3,5,8,10,12,13,14)){
   
   if (is.na(dqval)){
     return(TRUE)
@@ -229,17 +229,17 @@ get_model_opts = function(model){
 adjust_intervals = function(intervals, model){
   
   if (model == 'single'){ # Single component Sersic models (pure-disks and Ellipticals)
-    intervals[[1]]$nser = list(c(0.25, 10.0))
-    intervals[[1]]$re = list(c(0.05, 200.0))
+    intervals[[1]]$nser = list(c(0.25, 12.0))
+    intervals[[1]]$re = list(c(0.1, 200.0))
   } else if (model %in% c('psfexp', 'psfser')){ # PSF + Sersic models
-    intervals[[2]]$nser = list(c(0.25, 10.0)) # disk
-    intervals[[2]]$re = list(c(0.05, 200.0))
+    intervals[[2]]$nser = list(c(0.25, 12.0)) # disk
+    intervals[[2]]$re = list(c(0.1, 200.0))
   } else if (model %in% c('devexp', 'devser', 'serexp', 'serser')){ # Sersic + Sersic models
-    intervals[[1]]$nser[1] = list(c(0.25, 10.0)) # bulge
-    intervals[[1]]$nser[2] = list(c(0.25, 10.0)) # disk
+    intervals[[1]]$nser[1] = list(c(0.25, 12.0)) # bulge
+    intervals[[1]]$nser[2] = list(c(0.25, 12.0)) # disk
     
-    intervals[[1]]$re[1] = list(c(0.05, 200.0)) # bulge
-    intervals[[1]]$re[2] = list(c(0.05, 200.0)) # disk
+    intervals[[1]]$re[1] = list(c(0.1, 200.0)) # bulge
+    intervals[[1]]$re[2] = list(c(0.1, 200.0)) # disk
   } else {
     cat(paste0("ERROR: Model name '",model,"' not recognised.\n"))
   }
@@ -377,6 +377,10 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
     numExps = min(c(dfCat$num_exps[idx], maxExps))
     if (numExps == 0){
       cat(paste0("INFO: No frames found for source: ",sourceName,"\n"))
+      
+      endTime = Sys.time()
+      elapsedTime = (endTime - startTime)[[1]]
+      outputs$elapsedTime = elapsedTime
     } else {
       
       cat(paste0("INFO: ",dfCat$num_exps[idx]," exposures found (using ",numExps,"): \n\n"))
@@ -391,7 +395,7 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
       expNameList = list() # The names of each exposure
       chipList = list() # which chip the source resides on for each exposure
       magzpList = list() # The magnitude zeropoints
-      gainList = list() # The CCD gain, typically 1.0 bu is 2.0 in some PIDs.
+      gainList = list() # The CCD gain - typically gain=1.0, but is 2.0 in some PIDs.
       
       imgCutList = list()
       hdrCutList = list()
