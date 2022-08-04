@@ -380,7 +380,6 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
       
       endTime = Sys.time()
       elapsedTime = (endTime - startTime)[[1]]
-      outputs$elapsedTime = elapsedTime
     } else {
       
       cat(paste0("INFO: ",dfCat$num_exps[idx]," exposures found (using ",numExps,"): \n\n"))
@@ -443,12 +442,11 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         dqIndex = ifelse(chipList[[jj]] == 1, 4+3, 4) # The index in HST fits files that points to the data quality HDU
         
         # Load the image, data quality (dq) map and hdr objects
-        #imgFilename = paste0(framesDir,"/",proposalID,"/",obsetID,"/",expName,"_flt.fits")
-        imgFilename = paste0(framesDir,"/",proposalID,"/",obsetID,"/",expName,"_wcscorr_flt.fits")
+        imgFilename = paste0(framesDir,"/",proposalID,"/",obsetID,"/",expName,"_flt.fits")
         cat(paste0("\n\nINFO: Loading exposure #",jj," on chip ",chipList[[jj]],": ",imgFilename,"\n"))
-        if (!file.exists(imgFilename) & file.exists(gsub('_wcscorr','',imgFilename))){
-          cat(paste0("WARNING: No WCS-corrected file found for: '",expName,"'"))
-        }
+        # if (!file.exists(imgFilename) & file.exists(gsub('_wcscorr','',imgFilename))){
+        #   cat(paste0("WARNING: No WCS-corrected file found for: '",expName,"'"))
+        # }
         
         hdulist = Rfits_read_all(imgFilename, pointer=FALSE, zap=c('LOOKUP','DP[1-2]'))
         
@@ -456,7 +454,7 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
         dq = hdulist[[dqIndex]]
         
         # Get source position info in exposure
-        srcLocList[[expName]] = Rwcs_s2p(RA=dfCat[['RAmax']][idx], Dec=dfCat[['Decmax']][idx], header = img$raw, pixcen='R')
+        srcLocList[[expName]] = Rwcs_s2p(RA=dfCat[['RAmax']][idx], Dec=dfCat[['DECmax']][idx], header = img$raw, pixcen='R')
         
         # Calculate magnitude zeropoint
         fluxlambda = from_header(hdr = img$hdr, keys = 'PHOTFLAM', as=as.numeric)
@@ -556,10 +554,10 @@ foreach(idx=1:nrow(dfCat), .inorder=FALSE) %dopar% {
       cat(paste0("INFO: Creating median stack of ",length(imgCutList)," cutout images.\n"))
       imgCutStack = profoundMakeStack(image_list=lapply(imgWarpList, `[[`, 'imDat'), sky_list=skyList, skyRMS_list=skyRMSList, mask_list=maskWarpList, magzero_in = unlist(magzpList), masking='&')$image
       
-      maskStack = maskList[[1]]
+      maskStack = maskWarpList[[1]]
       if (numExps > 1){
         for (ii in seq(2,numExps)){
-          maskStack = maskStack & maskList[[ii]]
+          maskStack = maskStack & maskWarpList[[ii]]
         }
       }
       maskStack = apply(maskStack, c(1,2), as.integer)

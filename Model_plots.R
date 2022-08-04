@@ -88,7 +88,9 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magz
   
   toterror = c() # the total error accumulated across all pixels in all exposures
   
+  expNames = names(datalist)
   for (ii in seq(1, nexps)){ # loop over all exposures
+    exp = expNames[ii]
     image = datalist[[ii]]$image
     region = datalist[[ii]]$region
     sigma = datalist[[ii]]$sigma
@@ -150,7 +152,7 @@ multiImageMakePlots = function(datalist, imagestack, segim, parm, plottext, magz
     
     tempcon=magimage(1-region, add=T, col=NA)
     contour(tempcon, add=T, drawlabels = F, levels=1, col='darkgreen', lwd=contlw)
-    legend('topleft', legend='Data', cex=1.25)
+    legend('topleft', legend=paste0('Data ( ',exp,' )'), cex=1.25)
     
     ## Data - Model image plot
     # magimage(residual, stretchscale=stretchscale, stretch=stretch, lo=-maximg, hi=maximg, zlim=zlims, type='num', col=cmap)
